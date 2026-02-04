@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # GDB Analysis Container
+  # Ports bound to localhost only for security
+  # ==========================================================================
+  gdb-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    container_name: ghidra-mcp-gdb
+    ports:
+      - "127.0.0.1:5000:5000"    # HTTP API - localhost only
+      - "127.0.0.1:1234:1234"    # gdbserver - localhost only
+    volumes:
+      # Mount binaries directory (read-write for uploads)
+      - ./bins:/analysis/bins
+      # Mount logs directory for telemetry
+      - ./logs:/analysis/logs
+    restart: unless-stopped
+    # Required for debugging (GDB, strace, ltrace)
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    # Resource limits to prevent fork bombs, memory exhaustion
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          memory: 512M
+

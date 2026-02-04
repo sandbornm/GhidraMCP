@@ -3,8 +3,11 @@ package com.lauriewired;
 import ghidra.framework.plugintool.Plugin;
 import ghidra.framework.plugintool.PluginTool;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.GlobalNamespace;
 import ghidra.program.model.listing.*;
+import ghidra.program.model.mem.Memory;
+import ghidra.program.model.mem.MemoryAccessException;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.*;
 import ghidra.program.model.symbol.ReferenceManager;
@@ -19,9 +22,16 @@ import ghidra.program.model.pcode.HighFunctionDBUtil.ReturnCommitOption;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.plugin.PluginCategoryNames;
+import ghidra.app.plugin.assembler.Assembler;
+import ghidra.app.plugin.assembler.Assemblers;
+import ghidra.app.plugin.assembler.AssemblySemanticException;
+import ghidra.app.plugin.assembler.AssemblySyntaxException;
 import ghidra.app.services.CodeViewerService;
 import ghidra.app.services.ProgramManager;
 import ghidra.app.util.PseudoDisassembler;
+import ghidra.app.util.exporter.BinaryExporter;
+import ghidra.app.util.exporter.Exporter;
+import ghidra.app.util.exporter.ExporterException;
 import ghidra.app.cmd.function.SetVariableNameCmd;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.listing.LocalVariableImpl;
@@ -44,6 +54,8 @@ import ghidra.program.model.listing.Variable;
 import ghidra.app.decompiler.component.DecompilerUtils;
 import ghidra.app.decompiler.ClangToken;
 import ghidra.framework.options.Options;
+
+import java.io.File;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -207,6 +219,10 @@ public class GhidraMCPPlugin extends Plugin {
             sendResponse(exchange, getCurrentFunction());
         });
 
+        server.createContext("/get_program_name", exchange -> {
+            sendResponse(exchange, getProgramName());
+        });
+
         server.createContext("/list_functions", exchange -> {
             sendResponse(exchange, listFunctions());
         });
@@ -339,6 +355,65 @@ public class GhidraMCPPlugin extends Plugin {
             int limit = parseIntOrDefault(qparams.get("limit"), 100);
             String filter = qparams.get("filter");
             sendResponse(exchange, listDefinedStrings(offset, limit, filter));
+        });
+
+        // ==================== PATCHING ENDPOINTS ====================
+
+        // Patch bytes at an address
+        server.createContext("/patch_bytes", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String address = params.get("address");
+            String hexBytes = params.get("bytes");  // e.g., "90 90 90" or "909090"
+            String result = patchBytes(address, hexBytes);
+            sendResponse(exchange, result);
+        });
+
+        // Patch with assembly instruction
+        server.createContext("/patch_instruction", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String address = params.get("address");
+            String assembly = params.get("assembly");  // e.g., "NOP" or "MOV EAX, 0x1"
+            String result = patchInstruction(address, assembly);
+            sendResponse(exchange, result);
+        });
+
+        // NOP out an address range or instruction
+        server.createContext("/nop_region", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String startAddr = params.get("start_address");
+            String endAddr = params.get("end_address");
+            String result = nopRegion(startAddr, endAddr);
+            sendResponse(exchange, result);
+        });
+
+        // Get bytes at address
+        server.createContext("/get_bytes", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String address = qparams.get("address");
+            int length = parseIntOrDefault(qparams.get("length"), 16);
+            sendResponse(exchange, getBytes(address, length));
+        });
+
+        // ==================== EXPORT ENDPOINTS ====================
+
+        // Export patched binary
+        server.createContext("/export_binary", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String outputPath = params.get("output_path");
+            String format = params.get("format");  // "binary", "elf", "pe", or null for original
+            String result = exportBinary(outputPath, format);
+            sendResponse(exchange, result);
+        });
+
+        // Save the current program (to Ghidra project)
+        server.createContext("/save_program", exchange -> {
+            String result = saveProgram();
+            sendResponse(exchange, result);
+        });
+
+        // List available exporters
+        server.createContext("/list_exporters", exchange -> {
+            sendResponse(exchange, listExporters());
         });
 
         server.setExecutor(null);
@@ -760,6 +835,15 @@ public class GhidraMCPPlugin extends Plugin {
             func.getName(),
             func.getEntryPoint(),
             func.getSignature());
+    }
+
+    /**
+     * Get the name of the currently loaded program
+     */
+    private String getProgramName() {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        return program.getName();
     }
 
     /**
@@ -1525,6 +1609,373 @@ public class GhidraMCPPlugin extends Plugin {
             }
         }
         return null;
+    }
+
+    // ----------------------------------------------------------------------------------
+    // PATCHING METHODS
+    // ----------------------------------------------------------------------------------
+
+    /**
+     * Patch bytes at the specified address
+     * @param addressStr The address to patch
+     * @param hexBytes Hex string of bytes (e.g., "90 90 90" or "909090")
+     */
+    private String patchBytes(String addressStr, String hexBytes) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (addressStr == null || addressStr.isEmpty()) return "Address is required";
+        if (hexBytes == null || hexBytes.isEmpty()) return "Bytes are required";
+
+        // Parse hex string to byte array
+        hexBytes = hexBytes.replaceAll("\\s+", ""); // Remove whitespace
+        if (hexBytes.length() % 2 != 0) return "Invalid hex string (odd length)";
+        
+        byte[] bytes = new byte[hexBytes.length() / 2];
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                bytes[i] = (byte) Integer.parseInt(hexBytes.substring(i * 2, i * 2 + 2), 16);
+            }
+        } catch (NumberFormatException e) {
+            return "Invalid hex string: " + e.getMessage();
+        }
+
+        AtomicBoolean success = new AtomicBoolean(false);
+        StringBuilder result = new StringBuilder();
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("Patch bytes at " + addressStr);
+                try {
+                    Address addr = program.getAddressFactory().getAddress(addressStr);
+                    Memory memory = program.getMemory();
+                    
+                    // Get original bytes for logging
+                    byte[] original = new byte[bytes.length];
+                    memory.getBytes(addr, original);
+                    
+                    // Clear existing code units at this location
+                    Listing listing = program.getListing();
+                    listing.clearCodeUnits(addr, addr.add(bytes.length - 1), false);
+                    
+                    // Write new bytes
+                    memory.setBytes(addr, bytes);
+                    
+                    // Re-disassemble the patched area
+                    ghidra.app.cmd.disassemble.DisassembleCommand disCmd = 
+                        new ghidra.app.cmd.disassemble.DisassembleCommand(addr, null, true);
+                    disCmd.applyTo(program, new ConsoleTaskMonitor());
+                    
+                    result.append(String.format("Patched %d bytes at %s\n", bytes.length, addr));
+                    result.append(String.format("Original: %s\n", bytesToHex(original)));
+                    result.append(String.format("New: %s", bytesToHex(bytes)));
+                    success.set(true);
+                } catch (Exception e) {
+                    result.append("Error patching bytes: ").append(e.getMessage());
+                    Msg.error(this, "Error patching bytes", e);
+                } finally {
+                    program.endTransaction(tx, success.get());
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to execute patch on Swing thread: " + e.getMessage();
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * Patch with an assembly instruction
+     * @param addressStr The address to patch
+     * @param assembly The assembly instruction (e.g., "NOP" or "MOV EAX, 0x1")
+     */
+    private String patchInstruction(String addressStr, String assembly) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (addressStr == null || addressStr.isEmpty()) return "Address is required";
+        if (assembly == null || assembly.isEmpty()) return "Assembly instruction is required";
+
+        AtomicBoolean success = new AtomicBoolean(false);
+        StringBuilder result = new StringBuilder();
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("Patch instruction at " + addressStr);
+                try {
+                    Address addr = program.getAddressFactory().getAddress(addressStr);
+                    
+                    // Get the assembler for this program
+                    Assembler assembler = Assemblers.getAssembler(program);
+                    
+                    // Get original instruction for logging
+                    Instruction originalInstr = program.getListing().getInstructionAt(addr);
+                    String originalStr = (originalInstr != null) ? originalInstr.toString() : "N/A";
+                    int originalLen = (originalInstr != null) ? originalInstr.getLength() : 0;
+                    
+                    // Assemble the new instruction
+                    byte[] assembled = assembler.assembleLine(addr, assembly);
+                    
+                    // Clear existing code units
+                    Listing listing = program.getListing();
+                    if (originalLen > 0) {
+                        listing.clearCodeUnits(addr, addr.add(originalLen - 1), false);
+                    }
+                    
+                    // Write assembled bytes
+                    program.getMemory().setBytes(addr, assembled);
+                    
+                    // Re-disassemble
+                    ghidra.app.cmd.disassemble.DisassembleCommand disCmd = 
+                        new ghidra.app.cmd.disassemble.DisassembleCommand(addr, null, true);
+                    disCmd.applyTo(program, new ConsoleTaskMonitor());
+                    
+                    result.append(String.format("Patched instruction at %s\n", addr));
+                    result.append(String.format("Original: %s (%d bytes)\n", originalStr, originalLen));
+                    result.append(String.format("New: %s (%d bytes)\n", assembly, assembled.length));
+                    result.append(String.format("Bytes: %s", bytesToHex(assembled)));
+                    
+                    if (assembled.length < originalLen) {
+                        result.append(String.format("\nWarning: New instruction is shorter. Consider NOPing %d remaining bytes.", 
+                            originalLen - assembled.length));
+                    }
+                    
+                    success.set(true);
+                } catch (AssemblySyntaxException e) {
+                    result.append("Assembly syntax error: ").append(e.getMessage());
+                } catch (AssemblySemanticException e) {
+                    result.append("Assembly semantic error: ").append(e.getMessage());
+                } catch (Exception e) {
+                    result.append("Error patching instruction: ").append(e.getMessage());
+                    Msg.error(this, "Error patching instruction", e);
+                } finally {
+                    program.endTransaction(tx, success.get());
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to execute patch on Swing thread: " + e.getMessage();
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * NOP out a region of code
+     * @param startAddrStr Start address
+     * @param endAddrStr End address (inclusive)
+     */
+    private String nopRegion(String startAddrStr, String endAddrStr) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (startAddrStr == null || startAddrStr.isEmpty()) return "Start address is required";
+        if (endAddrStr == null || endAddrStr.isEmpty()) return "End address is required";
+
+        AtomicBoolean success = new AtomicBoolean(false);
+        StringBuilder result = new StringBuilder();
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("NOP region " + startAddrStr + " to " + endAddrStr);
+                try {
+                    Address startAddr = program.getAddressFactory().getAddress(startAddrStr);
+                    Address endAddr = program.getAddressFactory().getAddress(endAddrStr);
+                    
+                    long length = endAddr.subtract(startAddr) + 1;
+                    if (length <= 0 || length > 1024) {
+                        result.append("Invalid range or too large (max 1024 bytes)");
+                        return;
+                    }
+                    
+                    // Create NOP bytes (0x90 for x86)
+                    // TODO: Support other architectures' NOP instructions
+                    byte nopByte = (byte) 0x90;
+                    byte[] nops = new byte[(int) length];
+                    java.util.Arrays.fill(nops, nopByte);
+                    
+                    // Clear existing code units
+                    Listing listing = program.getListing();
+                    listing.clearCodeUnits(startAddr, endAddr, false);
+                    
+                    // Write NOPs
+                    program.getMemory().setBytes(startAddr, nops);
+                    
+                    // Re-disassemble
+                    ghidra.app.cmd.disassemble.DisassembleCommand disCmd = 
+                        new ghidra.app.cmd.disassemble.DisassembleCommand(startAddr, null, true);
+                    disCmd.applyTo(program, new ConsoleTaskMonitor());
+                    
+                    result.append(String.format("NOPed %d bytes from %s to %s", length, startAddr, endAddr));
+                    success.set(true);
+                } catch (Exception e) {
+                    result.append("Error NOPing region: ").append(e.getMessage());
+                    Msg.error(this, "Error NOPing region", e);
+                } finally {
+                    program.endTransaction(tx, success.get());
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to execute NOP on Swing thread: " + e.getMessage();
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * Get bytes at an address
+     */
+    private String getBytes(String addressStr, int length) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (addressStr == null || addressStr.isEmpty()) return "Address is required";
+        if (length <= 0 || length > 4096) return "Invalid length (1-4096)";
+
+        try {
+            Address addr = program.getAddressFactory().getAddress(addressStr);
+            byte[] bytes = new byte[length];
+            program.getMemory().getBytes(addr, bytes);
+            
+            StringBuilder result = new StringBuilder();
+            result.append(String.format("Bytes at %s (%d bytes):\n", addr, length));
+            result.append(bytesToHex(bytes));
+            result.append("\n\nASCII: ");
+            for (byte b : bytes) {
+                char c = (char) (b & 0xFF);
+                result.append((c >= 32 && c < 127) ? c : '.');
+            }
+            return result.toString();
+        } catch (Exception e) {
+            return "Error getting bytes: " + e.getMessage();
+        }
+    }
+
+    // ----------------------------------------------------------------------------------
+    // EXPORT METHODS
+    // ----------------------------------------------------------------------------------
+
+    /**
+     * Export the program to a binary file
+     * @param outputPath Path to save the file
+     * @param format Export format (null for original format)
+     */
+    private String exportBinary(String outputPath, String format) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (outputPath == null || outputPath.isEmpty()) return "Output path is required";
+
+        try {
+            File outputFile = new File(outputPath);
+            
+            // Get the appropriate exporter
+            Exporter exporter;
+            if (format == null || format.isEmpty() || format.equalsIgnoreCase("binary")) {
+                exporter = new BinaryExporter();
+            } else {
+                // Try to find exporter by name
+                exporter = findExporter(format);
+                if (exporter == null) {
+                    return "Unknown export format: " + format + ". Use /list_exporters to see available formats.";
+                }
+            }
+
+            // Create address set for entire program
+            AddressSet addrSet = new AddressSet(program.getMemory());
+            
+            // Export
+            TaskMonitor monitor = new ConsoleTaskMonitor();
+            boolean success = exporter.export(outputFile, program, addrSet, monitor);
+            
+            if (success) {
+                return String.format("Exported to %s using %s exporter\nFile size: %d bytes", 
+                    outputFile.getAbsolutePath(), 
+                    exporter.getName(),
+                    outputFile.length());
+            } else {
+                return "Export failed: " + exporter.getMessageLog().toString();
+            }
+        } catch (Exception e) {
+            Msg.error(this, "Export error", e);
+            return "Export error: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Find an exporter by name
+     */
+    private Exporter findExporter(String format) {
+        // Try common names
+        String formatLower = format.toLowerCase();
+        switch (formatLower) {
+            case "original":
+            case "elf":
+            case "pe":
+            case "native":
+                return new ghidra.app.util.exporter.OriginalFileExporter();
+            case "binary":
+            case "bin":
+            case "raw":
+                return new BinaryExporter();
+            case "hex":
+            case "ihex":
+            case "intelhex":
+                return new ghidra.app.util.exporter.IntelHexExporter();
+            case "ascii":
+            case "txt":
+            case "text":
+                return new ghidra.app.util.exporter.AsciiExporter();
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * List available exporters
+     */
+    private String listExporters() {
+        StringBuilder result = new StringBuilder();
+        result.append("Available export formats:\n");
+        result.append("- original / elf / pe (RECOMMENDED: preserves original file format with patches)\n");
+        result.append("- binary / raw (raw memory dump - may not be executable)\n");
+        result.append("- hex / intelhex (Intel HEX format)\n");
+        result.append("- ascii / txt (ASCII listing)\n");
+        result.append("\nFor patched binaries, use 'original' format to preserve ELF/PE structure.");
+        return result.toString();
+    }
+
+    /**
+     * Save the current program to the Ghidra project
+     */
+    private String saveProgram() {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+
+        AtomicBoolean success = new AtomicBoolean(false);
+        
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    program.save("Saved via GhidraMCP", new ConsoleTaskMonitor());
+                    success.set(true);
+                } catch (Exception e) {
+                    Msg.error(this, "Error saving program", e);
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to save: " + e.getMessage();
+        }
+
+        return success.get() 
+            ? "Program saved to Ghidra project: " + program.getName()
+            : "Failed to save program";
+    }
+
+    /**
+     * Convert bytes to hex string
+     */
+    private String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < bytes.length; i++) {
+            sb.append(String.format("%02X", bytes[i] & 0xFF));
+            if (i < bytes.length - 1) sb.append(" ");
+        }
+        return sb.toString();
     }
 
     // ----------------------------------------------------------------------------------
