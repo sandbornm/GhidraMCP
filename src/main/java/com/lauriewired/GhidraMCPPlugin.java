@@ -67,6 +67,7 @@ import ghidra.app.services.GoToService;
 import ghidra.framework.options.Options;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.AddressRangeIterator;
+import ghidra.program.model.symbol.FlowType;
 
 import java.io.File;
 
@@ -598,6 +599,46 @@ public class GhidraMCPPlugin extends Plugin {
             Map<String, String> qparams = parseQueryParams(exchange);
             String topic = qparams.get("topic");
             sendResponse(exchange, getGhidraHelp(topic));
+        });
+
+        // ==================== ENHANCED RENAME & RE ENDPOINTS ====================
+
+        // Rename a variable within a function identified by address
+        server.createContext("/rename_variable_by_address", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String functionAddress = params.get("function_address");
+            String oldName = params.get("old_name");
+            String newName = params.get("new_name");
+            sendResponse(exchange, renameVariableByAddress(functionAddress, oldName, newName));
+        });
+
+        // Batch rename multiple symbols in one request
+        server.createContext("/batch_rename", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            sendResponse(exchange, batchRename(body));
+        });
+
+        // Get complete call graph (both callers and callees) for a function
+        server.createContext("/get_call_graph", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String name = qparams.get("name");
+            int depth = parseIntOrDefault(qparams.get("depth"), 1);
+            sendResponse(exchange, getCallGraph(name, depth));
+        });
+
+        // List functions with auto-generated names (not yet analyzed/renamed)
+        server.createContext("/list_undefined_functions", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            int offset = parseIntOrDefault(qparams.get("offset"), 0);
+            int limit = parseIntOrDefault(qparams.get("limit"), 100);
+            sendResponse(exchange, listUndefinedFunctions(offset, limit));
+        });
+
+        // Get control flow and complexity info for a function
+        server.createContext("/get_function_cfg_info", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String address = qparams.get("address");
+            sendResponse(exchange, getFunctionCfgInfo(address));
         });
 
         server.setExecutor(null);
@@ -2977,6 +3018,469 @@ public class GhidraMCPPlugin extends Plugin {
             + "8. create_struct - Model data structures\n"
             + "9. patch_bytes/patch_instruction - Modify behavior\n"
             + "10. export_binary - Save patched binary\n";
+    }
+
+    // ----------------------------------------------------------------------------------
+    // ENHANCED RENAME & SEMI-AUTONOMOUS RE METHODS
+    // ----------------------------------------------------------------------------------
+
+    /**
+     * Rename a variable within a function identified by address.
+     * This is more reliable than by name when functions have auto-generated names.
+     */
+    private String renameVariableByAddress(String functionAddrStr, String oldVarName, String newVarName) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (functionAddrStr == null || functionAddrStr.isEmpty()) return "Function address is required";
+        if (oldVarName == null || oldVarName.isEmpty()) return "Old variable name is required";
+        if (newVarName == null || newVarName.isEmpty()) return "New variable name is required";
+
+        try {
+            Address addr = program.getAddressFactory().getAddress(functionAddrStr);
+            Function func = getFunctionForAddress(program, addr);
+            if (func == null) return "No function found at address " + functionAddrStr;
+
+            DecompInterface decomp = new DecompInterface();
+            decomp.openProgram(program);
+            DecompileResults result = decomp.decompileFunction(func, 30, new ConsoleTaskMonitor());
+            if (result == null || !result.decompileCompleted()) return "Decompilation failed";
+
+            HighFunction highFunction = result.getHighFunction();
+            if (highFunction == null) return "No high function available";
+
+            LocalSymbolMap localSymbolMap = highFunction.getLocalSymbolMap();
+            if (localSymbolMap == null) return "No local symbol map";
+
+            HighSymbol highSymbol = null;
+            Iterator<HighSymbol> symbols = localSymbolMap.getSymbols();
+            while (symbols.hasNext()) {
+                HighSymbol symbol = symbols.next();
+                if (symbol.getName().equals(oldVarName)) {
+                    highSymbol = symbol;
+                }
+                if (symbol.getName().equals(newVarName)) {
+                    return "Error: A variable with name '" + newVarName + "' already exists in this function";
+                }
+            }
+
+            if (highSymbol == null) return "Variable '" + oldVarName + "' not found in function at " + functionAddrStr;
+
+            boolean commitRequired = checkFullCommit(highSymbol, highFunction);
+            final HighSymbol finalHighSymbol = highSymbol;
+            AtomicBoolean successFlag = new AtomicBoolean(false);
+
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("Rename variable by address");
+                try {
+                    if (commitRequired) {
+                        HighFunctionDBUtil.commitParamsToDatabase(highFunction, false,
+                            ReturnCommitOption.NO_COMMIT, func.getSignatureSource());
+                    }
+                    HighFunctionDBUtil.updateDBVariable(
+                        finalHighSymbol, newVarName, null, SourceType.USER_DEFINED);
+                    successFlag.set(true);
+                } catch (Exception e) {
+                    Msg.error(this, "Failed to rename variable by address", e);
+                } finally {
+                    program.endTransaction(tx, successFlag.get());
+                }
+            });
+
+            return successFlag.get()
+                ? "Renamed '" + oldVarName + "' to '" + newVarName + "' in " + func.getName() + " @ " + functionAddrStr
+                : "Failed to rename variable";
+        } catch (Exception e) {
+            return "Error: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Batch rename multiple symbols. Accepts a JSON body with an array of rename operations.
+     * Format: [{"type":"function","old_name":"FUN_001","new_name":"decrypt"},
+     *          {"type":"variable","function_address":"0x401000","old_name":"local_8","new_name":"buffer"},
+     *          {"type":"data","address":"0x402000","new_name":"g_key"}]
+     */
+    private String batchRename(String jsonBody) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (jsonBody == null || jsonBody.isEmpty()) return "JSON body is required";
+
+        try {
+            // Parse JSON array manually (avoid external deps)
+            // Simple JSON array parser for the expected format
+            List<Map<String, String>> operations = parseJsonArray(jsonBody);
+            if (operations.isEmpty()) return "No operations found in JSON body";
+
+            StringBuilder results = new StringBuilder();
+            int successCount = 0;
+            int failCount = 0;
+
+            for (Map<String, String> op : operations) {
+                String type = op.getOrDefault("type", "");
+                String opResult;
+
+                switch (type) {
+                    case "function":
+                        String oldName = op.get("old_name");
+                        String newName = op.get("new_name");
+                        boolean funcSuccess = renameFunction(oldName, newName);
+                        opResult = funcSuccess
+                            ? "OK: Renamed function '" + oldName + "' -> '" + newName + "'"
+                            : "FAIL: Could not rename function '" + oldName + "'";
+                        break;
+                    case "function_by_address":
+                        String funcAddr = op.get("address");
+                        String funcNewName = op.get("new_name");
+                        boolean addrSuccess = renameFunctionByAddress(funcAddr, funcNewName);
+                        opResult = addrSuccess
+                            ? "OK: Renamed function at " + funcAddr + " -> '" + funcNewName + "'"
+                            : "FAIL: Could not rename function at " + funcAddr;
+                        break;
+                    case "variable":
+                        String varFuncAddr = op.get("function_address");
+                        String varOld = op.get("old_name");
+                        String varNew = op.get("new_name");
+                        opResult = renameVariableByAddress(varFuncAddr, varOld, varNew);
+                        break;
+                    case "data":
+                        String dataAddr = op.get("address");
+                        String dataName = op.get("new_name");
+                        renameDataAtAddress(dataAddr, dataName);
+                        opResult = "OK: Renamed data at " + dataAddr + " -> '" + dataName + "'";
+                        break;
+                    default:
+                        opResult = "FAIL: Unknown operation type '" + type + "'";
+                        break;
+                }
+
+                if (opResult.startsWith("OK") || opResult.startsWith("Renamed")) {
+                    successCount++;
+                } else {
+                    failCount++;
+                }
+                results.append(opResult).append("\n");
+            }
+
+            results.append(String.format("\nBatch complete: %d succeeded, %d failed out of %d operations",
+                successCount, failCount, operations.size()));
+            return results.toString();
+        } catch (Exception e) {
+            return "Error processing batch rename: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Simple JSON array parser for batch operations.
+     * Parses an array of objects with string key-value pairs.
+     */
+    private List<Map<String, String>> parseJsonArray(String json) {
+        List<Map<String, String>> result = new ArrayList<>();
+        json = json.trim();
+        if (!json.startsWith("[") || !json.endsWith("]")) return result;
+
+        // Remove outer brackets
+        json = json.substring(1, json.length() - 1).trim();
+        if (json.isEmpty()) return result;
+
+        // Split by }, { pattern to get individual objects
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (c == '{') depth++;
+            else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    String objStr = json.substring(start, i + 1).trim();
+                    if (objStr.startsWith(",")) objStr = objStr.substring(1).trim();
+                    Map<String, String> obj = parseJsonObject(objStr);
+                    if (!obj.isEmpty()) result.add(obj);
+                    start = i + 1;
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Simple JSON object parser for string key-value pairs.
+     */
+    private Map<String, String> parseJsonObject(String json) {
+        Map<String, String> result = new HashMap<>();
+        json = json.trim();
+        if (!json.startsWith("{") || !json.endsWith("}")) return result;
+
+        json = json.substring(1, json.length() - 1).trim();
+
+        // Match "key": "value" patterns
+        int i = 0;
+        while (i < json.length()) {
+            // Find key
+            int keyStart = json.indexOf('"', i);
+            if (keyStart < 0) break;
+            int keyEnd = json.indexOf('"', keyStart + 1);
+            if (keyEnd < 0) break;
+            String key = json.substring(keyStart + 1, keyEnd);
+
+            // Find colon
+            int colon = json.indexOf(':', keyEnd + 1);
+            if (colon < 0) break;
+
+            // Find value
+            int valStart = json.indexOf('"', colon + 1);
+            if (valStart < 0) break;
+            int valEnd = valStart + 1;
+            while (valEnd < json.length()) {
+                if (json.charAt(valEnd) == '"' && json.charAt(valEnd - 1) != '\\') break;
+                valEnd++;
+            }
+            if (valEnd >= json.length()) break;
+            String value = json.substring(valStart + 1, valEnd);
+
+            result.put(key, value);
+            i = valEnd + 1;
+        }
+        return result;
+    }
+
+    /**
+     * Get the complete call graph for a function - both callers and callees.
+     * Supports multi-level depth for more comprehensive graphs.
+     */
+    private String getCallGraph(String functionName, int depth) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (functionName == null || functionName.isEmpty()) return "Function name is required";
+        if (depth < 1) depth = 1;
+        if (depth > 5) depth = 5; // Cap depth to prevent runaway
+
+        Function targetFunc = null;
+        for (Function f : program.getFunctionManager().getFunctions(true)) {
+            if (f.getName().equals(functionName)) {
+                targetFunc = f;
+                break;
+            }
+        }
+        if (targetFunc == null) return "Function not found: " + functionName;
+
+        StringBuilder result = new StringBuilder();
+        result.append("=== Call Graph for ").append(functionName)
+              .append(" @ ").append(targetFunc.getEntryPoint()).append(" ===\n\n");
+
+        // Callers (incoming)
+        result.append("--- CALLERS (who calls ").append(functionName).append(") ---\n");
+        Set<String> visited = new HashSet<>();
+        collectCallers(program, targetFunc, result, visited, 0, depth);
+
+        // Callees (outgoing)
+        result.append("\n--- CALLEES (what ").append(functionName).append(" calls) ---\n");
+        visited.clear();
+        collectCallees(program, targetFunc, result, visited, 0, depth);
+
+        return result.toString();
+    }
+
+    private void collectCallers(Program program, Function func, StringBuilder result,
+                                Set<String> visited, int currentDepth, int maxDepth) {
+        if (currentDepth >= maxDepth) return;
+        String indent = "  ".repeat(currentDepth);
+
+        ReferenceManager refManager = program.getReferenceManager();
+        ReferenceIterator refs = refManager.getReferencesTo(func.getEntryPoint());
+
+        while (refs.hasNext()) {
+            Reference ref = refs.next();
+            if (ref.getReferenceType().isCall()) {
+                Function caller = program.getFunctionManager().getFunctionContaining(ref.getFromAddress());
+                if (caller != null) {
+                    String key = caller.getName() + "@" + caller.getEntryPoint();
+                    if (!visited.contains(key)) {
+                        visited.add(key);
+                        result.append(String.format("%s<- %s @ %s [%s]\n",
+                            indent, caller.getName(), caller.getEntryPoint(),
+                            ref.getReferenceType().getName()));
+                        collectCallers(program, caller, result, visited, currentDepth + 1, maxDepth);
+                    }
+                }
+            }
+        }
+    }
+
+    private void collectCallees(Program program, Function func, StringBuilder result,
+                                Set<String> visited, int currentDepth, int maxDepth) {
+        if (currentDepth >= maxDepth) return;
+        String indent = "  ".repeat(currentDepth);
+
+        ReferenceManager refManager = program.getReferenceManager();
+        AddressRangeIterator bodyRanges = func.getBody().getAddressRanges();
+
+        while (bodyRanges.hasNext()) {
+            AddressRange range = bodyRanges.next();
+            Address addr = range.getMinAddress();
+            while (addr != null && addr.compareTo(range.getMaxAddress()) <= 0) {
+                Reference[] refsFrom = refManager.getReferencesFrom(addr);
+                for (Reference ref : refsFrom) {
+                    if (ref.getReferenceType().isCall()) {
+                        Function callee = program.getFunctionManager().getFunctionAt(ref.getToAddress());
+                        if (callee == null) {
+                            callee = program.getFunctionManager().getFunctionContaining(ref.getToAddress());
+                        }
+                        if (callee != null) {
+                            String key = callee.getName() + "@" + callee.getEntryPoint();
+                            if (!visited.contains(key)) {
+                                visited.add(key);
+                                result.append(String.format("%s-> %s @ %s [%s]\n",
+                                    indent, callee.getName(), callee.getEntryPoint(),
+                                    ref.getReferenceType().getName()));
+                                collectCallees(program, callee, result, visited, currentDepth + 1, maxDepth);
+                            }
+                        }
+                    }
+                }
+                addr = addr.next();
+            }
+        }
+    }
+
+    /**
+     * List functions with auto-generated names (FUN_, thunk_, entry, etc.)
+     * that have not yet been meaningfully renamed by an analyst.
+     */
+    private String listUndefinedFunctions(int offset, int limit) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+
+        List<String> undefinedFunctions = new ArrayList<>();
+        for (Function func : program.getFunctionManager().getFunctions(true)) {
+            String name = func.getName();
+            // Check for auto-generated name patterns
+            if (name.startsWith("FUN_") || name.startsWith("thunk_FUN_") ||
+                name.startsWith("switchD_") || name.startsWith("caseD_") ||
+                name.equals("entry") || name.startsWith("_") && name.contains("FUN_") ||
+                func.getSymbol().getSource() == SourceType.DEFAULT ||
+                func.getSymbol().getSource() == SourceType.ANALYSIS) {
+
+                long bodySize = func.getBody().getNumAddresses();
+                int paramCount = func.getParameterCount();
+                String callerInfo = "";
+
+                // Count callers
+                ReferenceIterator refs = program.getReferenceManager().getReferencesTo(func.getEntryPoint());
+                int callerCount = 0;
+                while (refs.hasNext()) {
+                    Reference ref = refs.next();
+                    if (ref.getReferenceType().isCall()) callerCount++;
+                }
+
+                undefinedFunctions.add(String.format("%s @ %s (size=%d, params=%d, callers=%d, source=%s)",
+                    name, func.getEntryPoint(), bodySize, paramCount, callerCount,
+                    func.getSymbol().getSource()));
+            }
+        }
+
+        if (undefinedFunctions.isEmpty()) return "No undefined/auto-named functions found";
+
+        String header = String.format("Found %d undefined/auto-named functions:\n", undefinedFunctions.size());
+        return header + paginateList(undefinedFunctions, offset, limit);
+    }
+
+    /**
+     * Get control flow graph information for a function including basic block count,
+     * edges, and rough complexity metrics useful for triage.
+     */
+    private String getFunctionCfgInfo(String addressStr) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (addressStr == null || addressStr.isEmpty()) return "Address is required";
+
+        try {
+            Address addr = program.getAddressFactory().getAddress(addressStr);
+            Function func = getFunctionForAddress(program, addr);
+            if (func == null) return "No function found at address " + addressStr;
+
+            // Decompile to get high-level info
+            DecompInterface decomp = new DecompInterface();
+            decomp.openProgram(program);
+            DecompileResults decompResult = decomp.decompileFunction(func, 30, new ConsoleTaskMonitor());
+
+            StringBuilder result = new StringBuilder();
+            result.append("=== CFG Info for ").append(func.getName())
+                  .append(" @ ").append(func.getEntryPoint()).append(" ===\n\n");
+
+            // Basic function metrics
+            long bodySize = func.getBody().getNumAddresses();
+            result.append("Body size: ").append(bodySize).append(" bytes\n");
+
+            // Count instructions and branches
+            int instructionCount = 0;
+            int branchCount = 0;
+            int callCount = 0;
+            Set<Address> branchTargets = new HashSet<>();
+
+            Listing listing = program.getListing();
+            InstructionIterator instructions = listing.getInstructions(func.getEntryPoint(), true);
+            Address end = func.getBody().getMaxAddress();
+
+            while (instructions.hasNext()) {
+                Instruction instr = instructions.next();
+                if (instr.getAddress().compareTo(end) > 0) break;
+                instructionCount++;
+
+                FlowType flowType = instr.getFlowType();
+                if (flowType.isConditional()) {
+                    branchCount++;
+                    for (Address target : instr.getFlows()) {
+                        branchTargets.add(target);
+                    }
+                }
+                if (flowType.isCall()) {
+                    callCount++;
+                }
+                if (flowType.isJump() && !flowType.isConditional()) {
+                    for (Address target : instr.getFlows()) {
+                        branchTargets.add(target);
+                    }
+                }
+            }
+
+            // Estimate basic blocks (branch targets + entry point = block leaders)
+            branchTargets.add(func.getEntryPoint());
+            int estimatedBlocks = branchTargets.size();
+
+            result.append("Instructions: ").append(instructionCount).append("\n");
+            result.append("Estimated basic blocks: ").append(estimatedBlocks).append("\n");
+            result.append("Conditional branches: ").append(branchCount).append("\n");
+            result.append("Function calls: ").append(callCount).append("\n");
+            // Cyclomatic complexity approximation: E - N + 2P where P=1
+            // Approximate as branches + 1
+            int cyclomaticComplexity = branchCount + 1;
+            result.append("Estimated cyclomatic complexity: ").append(cyclomaticComplexity).append("\n");
+
+            // Parameters and locals
+            result.append("Parameters: ").append(func.getParameterCount()).append("\n");
+            result.append("Local variables: ").append(func.getLocalVariables().length).append("\n");
+            result.append("Stack frame size: ").append(func.getStackFrame().getFrameSize()).append("\n");
+
+            // Decompiled line count
+            if (decompResult != null && decompResult.decompileCompleted() &&
+                decompResult.getDecompiledFunction() != null) {
+                String cCode = decompResult.getDecompiledFunction().getC();
+                int lineCount = cCode.split("\n").length;
+                result.append("Decompiled lines: ").append(lineCount).append("\n");
+            }
+
+            // Classify function complexity
+            String complexity;
+            if (cyclomaticComplexity <= 5) complexity = "Low";
+            else if (cyclomaticComplexity <= 15) complexity = "Moderate";
+            else if (cyclomaticComplexity <= 30) complexity = "High";
+            else complexity = "Very High";
+            result.append("Complexity class: ").append(complexity).append("\n");
+
+            return result.toString();
+        } catch (Exception e) {
+            return "Error getting CFG info: " + e.getMessage();
+        }
     }
 
     // ----------------------------------------------------------------------------------
