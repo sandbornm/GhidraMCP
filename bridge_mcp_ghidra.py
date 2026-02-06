@@ -77,7 +77,7 @@ def safe_get(endpoint: str, params: dict = None) -> list:
     url = urljoin(ghidra_server_url, endpoint)
 
     try:
-        response = requests.get(url, params=params, timeout=5)
+        response = requests.get(url, params=params, timeout=30)
         response.encoding = 'utf-8'
         if response.ok:
             return response.text.splitlines()
@@ -91,7 +91,7 @@ def safe_post(endpoint: str, data: dict | str) -> str:
     try:
         url = urljoin(ghidra_server_url, endpoint)
         if isinstance(data, dict):
-            response = requests.post(url, data=data, timeout=5)
+            response = requests.post(url, data=data, timeout=30)
         else:
             response = requests.post(url, data=data.encode("utf-8"), timeout=5)
         response.encoding = 'utf-8'
@@ -366,6 +366,429 @@ def list_strings(offset: int = 0, limit: int = 2000, filter: str = None) -> list
     if filter:
         params["filter"] = filter
     return safe_get("strings", params)
+
+
+# =============================================================================
+# ENHANCED ANALYSIS TOOLS (Call Graph, Function Management, etc.)
+# =============================================================================
+
+@mcp.tool()
+@recorded_tool
+def get_callers(name: str, offset: int = 0, limit: int = 100) -> list:
+    """
+    Get all functions that call the specified function (incoming call references).
+    Useful for understanding who uses a function and tracing execution flow backward.
+
+    Args:
+        name: Function name to find callers for
+        offset: Pagination offset (default: 0)
+        limit: Maximum number of results (default: 100)
+
+    Returns:
+        List of calling functions with addresses and reference types
+    """
+    return safe_get("callers", {"name": name, "offset": offset, "limit": limit})
+
+
+@mcp.tool()
+@recorded_tool
+def get_callees(name: str, offset: int = 0, limit: int = 100) -> list:
+    """
+    Get all functions called by the specified function (outgoing call references).
+    Useful for understanding what a function does and tracing execution flow forward.
+
+    Args:
+        name: Function name to find callees for
+        offset: Pagination offset (default: 0)
+        limit: Maximum number of results (default: 100)
+
+    Returns:
+        List of called functions with addresses and reference types
+    """
+    return safe_get("callees", {"name": name, "offset": offset, "limit": limit})
+
+
+@mcp.tool()
+@recorded_tool
+def get_function_variables(address: str) -> str:
+    """
+    Get all parameters and local variables for a function at the given address.
+    Shows variable names, types, storage locations, and stack frame info.
+
+    Args:
+        address: Function address (e.g. "0x401000")
+
+    Returns:
+        Detailed listing of function parameters, local variables, and stack frame
+    """
+    return "\n".join(safe_get("get_function_variables", {"address": address}))
+
+
+@mcp.tool()
+@recorded_tool
+def create_function(address: str, name: str = None) -> str:
+    """
+    Create a new function at the specified address. Useful when Ghidra's
+    auto-analysis missed a function or incorrectly merged code.
+
+    Args:
+        address: Address where the function starts (e.g. "0x401000")
+        name: Optional name for the new function
+
+    Returns:
+        Success or failure message
+    """
+    data = {"address": address}
+    if name:
+        data["name"] = name
+    return safe_post("create_function", data)
+
+
+@mcp.tool()
+@recorded_tool
+def delete_function(address: str) -> str:
+    """
+    Delete/remove a function definition at the specified address.
+    The underlying code/data is preserved, only the function boundary is removed.
+
+    Args:
+        address: Address of the function to delete (e.g. "0x401000")
+
+    Returns:
+        Success or failure message
+    """
+    return safe_post("delete_function", {"address": address})
+
+
+@mcp.tool()
+@recorded_tool
+def list_data_types(offset: int = 0, limit: int = 100, category: str = None) -> list:
+    """
+    List all defined data types in the program (structures, enums, typedefs, etc.).
+
+    Args:
+        offset: Pagination offset (default: 0)
+        limit: Maximum number of results (default: 100)
+        category: Optional category filter (e.g. "windows" to find Windows types)
+
+    Returns:
+        List of data types with their kind, size, and category path
+    """
+    params = {"offset": offset, "limit": limit}
+    if category:
+        params["category"] = category
+    return safe_get("list_data_types", params)
+
+
+@mcp.tool()
+@recorded_tool
+def get_struct_fields(name: str) -> str:
+    """
+    Get the field layout of a structure data type.
+    Shows each field's offset, size, type, and name.
+
+    Args:
+        name: Name of the structure
+
+    Returns:
+        Detailed structure layout with all fields
+    """
+    return "\n".join(safe_get("get_struct_fields", {"name": name}))
+
+
+@mcp.tool()
+@recorded_tool
+def create_struct(name: str, size: int = 0, category: str = None) -> str:
+    """
+    Create a new structure data type. Use size=0 for a growable struct
+    that expands as fields are added.
+
+    Args:
+        name: Name for the new structure
+        size: Initial size in bytes (0 for growable)
+        category: Optional category path (e.g. "/MyTypes")
+
+    Returns:
+        Success message with the created structure path
+
+    Example:
+        create_struct("NetworkPacket", 64)
+        create_struct("FileHeader", 0, "/CustomTypes")
+    """
+    data = {"name": name, "size": str(size)}
+    if category:
+        data["category"] = category
+    return safe_post("create_struct", data)
+
+
+@mcp.tool()
+@recorded_tool
+def add_struct_field(struct_name: str, field_type: str, field_name: str = None, offset: int = -1, size: int = 0) -> str:
+    """
+    Add a field to an existing structure. Can append to the end or insert at a specific offset.
+
+    Args:
+        struct_name: Name of the structure to modify
+        field_type: Data type of the field (e.g. "int", "char", "pointer", struct name)
+        field_name: Optional name for the field
+        offset: Byte offset to insert at (-1 to append at end)
+        size: Override field size in bytes (0 to use type's natural size)
+
+    Returns:
+        Success message with field details
+
+    Example:
+        add_struct_field("MyStruct", "int", "flags")
+        add_struct_field("MyStruct", "char", "name", offset=8, size=32)
+    """
+    data = {"struct_name": struct_name, "field_type": field_type}
+    if field_name:
+        data["field_name"] = field_name
+    if offset >= 0:
+        data["offset"] = str(offset)
+    if size > 0:
+        data["size"] = str(size)
+    return safe_post("add_struct_field", data)
+
+
+@mcp.tool()
+@recorded_tool
+def create_enum(name: str, size: int = 4, category: str = None) -> str:
+    """
+    Create a new enum data type. Enums are useful for labeling magic constants,
+    flags, error codes, and other numeric values.
+
+    Args:
+        name: Name for the new enum
+        size: Size in bytes (1, 2, 4, or 8; default: 4)
+        category: Optional category path (e.g. "/MyTypes")
+
+    Returns:
+        Success message with the created enum path
+
+    Example:
+        create_enum("ErrorCode", 4)
+        create_enum("Flags", 4, "/CustomTypes")
+    """
+    data = {"name": name, "size": str(size)}
+    if category:
+        data["category"] = category
+    return safe_post("create_enum", data)
+
+
+@mcp.tool()
+@recorded_tool
+def add_enum_member(enum_name: str, member_name: str, value: int) -> str:
+    """
+    Add a named member to an existing enum type.
+
+    Args:
+        enum_name: Name of the enum to modify
+        member_name: Name for the new member
+        value: Integer value for the member
+
+    Returns:
+        Success message with member details
+
+    Example:
+        add_enum_member("ErrorCode", "SUCCESS", 0)
+        add_enum_member("ErrorCode", "INVALID_PARAM", -1)
+        add_enum_member("Flags", "FLAG_READ", 1)
+    """
+    return safe_post("add_enum_member", {
+        "enum_name": enum_name,
+        "member_name": member_name,
+        "value": str(value)
+    })
+
+
+@mcp.tool()
+@recorded_tool
+def set_bookmark(address: str, category: str = "Analysis", comment: str = "") -> str:
+    """
+    Set a bookmark at the specified address to track interesting locations.
+    Bookmarks are visible in Ghidra's Bookmark window and persist in the project.
+
+    Args:
+        address: Address to bookmark (e.g. "0x401000")
+        category: Bookmark category for organization (default: "Analysis")
+        comment: Descriptive comment for the bookmark
+
+    Returns:
+        Confirmation message
+
+    Example:
+        set_bookmark("0x401000", "Vulnerability", "Potential buffer overflow")
+        set_bookmark("0x402000", "Crypto", "AES key derivation")
+    """
+    return safe_post("set_bookmark", {
+        "address": address,
+        "category": category,
+        "comment": comment
+    })
+
+
+@mcp.tool()
+@recorded_tool
+def list_bookmarks(offset: int = 0, limit: int = 100, category: str = None) -> list:
+    """
+    List all bookmarks in the program, optionally filtered by category.
+
+    Args:
+        offset: Pagination offset (default: 0)
+        limit: Maximum number of results (default: 100)
+        category: Optional category filter
+
+    Returns:
+        List of bookmarks with addresses, categories, and comments
+    """
+    params = {"offset": offset, "limit": limit}
+    if category:
+        params["category"] = category
+    return safe_get("list_bookmarks", params)
+
+
+@mcp.tool()
+@recorded_tool
+def delete_bookmark(address: str, category: str = None) -> str:
+    """
+    Delete bookmark(s) at the specified address.
+
+    Args:
+        address: Address of the bookmark(s) to delete
+        category: Optional category filter (delete only bookmarks in this category)
+
+    Returns:
+        Confirmation message with number of bookmarks removed
+    """
+    data = {"address": address}
+    if category:
+        data["category"] = category
+    return safe_post("delete_bookmark", data)
+
+
+@mcp.tool()
+@recorded_tool
+def search_memory(pattern: str, max_results: int = 100) -> str:
+    """
+    Search program memory for a byte pattern. Supports wildcards with '??'.
+    Useful for finding specific instruction patterns, signatures, or data.
+
+    Args:
+        pattern: Hex byte pattern (e.g. "48 89 5C 24 08" or "FF 15 ?? ?? ?? ??")
+        max_results: Maximum number of matches to return (default: 100)
+
+    Returns:
+        List of addresses where the pattern was found
+
+    Example:
+        search_memory("48 89 5C 24 08")         # Exact byte sequence
+        search_memory("FF 15 ?? ?? ?? ??")       # CALL [rip+??] with wildcards
+        search_memory("E8 ?? ?? ?? ?? 85 C0")    # CALL followed by TEST EAX, EAX
+    """
+    return "\n".join(safe_get("search_memory", {"pattern": pattern, "max_results": max_results}))
+
+
+@mcp.tool()
+@recorded_tool
+def get_address_info(address: str) -> str:
+    """
+    Get comprehensive information about what exists at a given address.
+    Returns details about the memory block, function, instruction, data,
+    symbols, comments, and cross-references at the address.
+
+    Args:
+        address: Address to inspect (e.g. "0x401000")
+
+    Returns:
+        Detailed multi-section report about the address
+    """
+    return "\n".join(safe_get("get_address_info", {"address": address}))
+
+
+@mcp.tool()
+@recorded_tool
+def goto_address(address: str) -> str:
+    """
+    Navigate the Ghidra UI to the specified address. The listing view,
+    decompiler, and other views will update to show the target address.
+
+    Args:
+        address: Address to navigate to (e.g. "0x401000")
+
+    Returns:
+        Confirmation message
+    """
+    return safe_post("goto_address", {"address": address})
+
+
+@mcp.tool()
+@recorded_tool
+def get_program_info() -> str:
+    """
+    Get comprehensive metadata about the currently loaded program/binary.
+    Includes architecture, format, hashes, memory layout, and statistics.
+
+    Returns:
+        Detailed program information including language, compiler, format,
+        hashes, address ranges, function count, symbol count, etc.
+    """
+    return "\n".join(safe_get("get_program_info"))
+
+
+@mcp.tool()
+@recorded_tool
+def list_comments(offset: int = 0, limit: int = 100, type: str = None) -> list:
+    """
+    List all comments in the program with their addresses and types.
+
+    Args:
+        offset: Pagination offset (default: 0)
+        limit: Maximum number of results (default: 100)
+        type: Optional comment type filter: "eol", "pre", "post", "plate", "repeatable"
+
+    Returns:
+        List of comments with addresses, types, containing functions
+    """
+    params = {"offset": offset, "limit": limit}
+    if type:
+        params["type"] = type
+    return safe_get("list_comments", params)
+
+
+@mcp.tool()
+@recorded_tool
+def run_auto_analysis() -> str:
+    """
+    Trigger Ghidra's auto-analysis on the entire program.
+    Useful after making changes (creating functions, patching bytes) that
+    may require re-analysis to update references and type propagation.
+
+    Returns:
+        Status message about the analysis
+    """
+    return "\n".join(safe_get("run_auto_analysis"))
+
+
+@mcp.tool()
+@recorded_tool
+def ghidra_help(topic: str = None) -> str:
+    """
+    Get help and guidance on how to accomplish reverse engineering tasks
+    with GhidraMCP. Lists available tools, tips, and typical workflows.
+
+    Args:
+        topic: Help topic - one of: "xrefs", "functions", "types", "patching",
+               "navigation", "analysis", "comments", "search".
+               Omit to see all topics and a typical RE workflow.
+
+    Returns:
+        Help text with available tools, tips, and examples
+    """
+    params = {}
+    if topic:
+        params["topic"] = topic
+    return "\n".join(safe_get("ghidra_help", params))
 
 
 # =============================================================================
