@@ -63,6 +63,11 @@ class TrajectoryRecorder:
         "get_current_address": "navigation",
         "get_current_function": "navigation",
         "get_function_by_address": "navigation",
+
+        # Enhanced Analysis
+        "get_call_graph": "static_analysis",
+        "list_undefined_functions": "static_analysis",
+        "get_function_cfg_info": "static_analysis",
         
         # Annotation
         "rename_function": "annotation",
@@ -73,6 +78,8 @@ class TrajectoryRecorder:
         "set_disassembly_comment": "annotation",
         "set_function_prototype": "annotation",
         "set_local_variable_type": "annotation",
+        "rename_variable_by_address": "annotation",
+        "batch_rename": "annotation",
         
         # Patching
         "patch_bytes": "patching",

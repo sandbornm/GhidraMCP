@@ -792,6 +792,131 @@ def ghidra_help(topic: str = None) -> str:
 
 
 # =============================================================================
+# ENHANCED RENAME & SEMI-AUTONOMOUS RE TOOLS
+# =============================================================================
+
+@mcp.tool()
+@recorded_tool
+def rename_variable_by_address(function_address: str, old_name: str, new_name: str) -> str:
+    """
+    Rename a variable within a function identified by its address.
+    More reliable than rename_variable when functions have auto-generated names
+    (e.g., FUN_00401000) since the address is unambiguous.
+
+    Args:
+        function_address: Address of the function containing the variable (e.g. "0x401000")
+        old_name: Current name of the variable to rename
+        new_name: New name for the variable
+
+    Returns:
+        Success or failure message with details
+    """
+    return safe_post("rename_variable_by_address", {
+        "function_address": function_address,
+        "old_name": old_name,
+        "new_name": new_name
+    })
+
+
+@mcp.tool()
+@recorded_tool
+def batch_rename(operations: str) -> str:
+    """
+    Rename multiple functions, variables, and data labels in a single batch operation.
+    Useful for efficiently annotating a binary after initial analysis.
+
+    Args:
+        operations: JSON string containing an array of rename operations. Each operation
+                    is an object with a "type" field and relevant parameters:
+
+                    Function rename by name:
+                      {"type": "function", "old_name": "FUN_001", "new_name": "decrypt_data"}
+
+                    Function rename by address:
+                      {"type": "function_by_address", "address": "0x401000", "new_name": "main"}
+
+                    Variable rename (by function address):
+                      {"type": "variable", "function_address": "0x401000",
+                       "old_name": "local_8", "new_name": "buffer"}
+
+                    Data label rename:
+                      {"type": "data", "address": "0x402000", "new_name": "g_encryption_key"}
+
+    Returns:
+        Summary of results for each operation
+
+    Example:
+        batch_rename('[{"type":"function","old_name":"FUN_001","new_name":"decrypt"},{"type":"variable","function_address":"0x401000","old_name":"local_8","new_name":"key"}]')
+    """
+    return safe_post("batch_rename", operations)
+
+
+@mcp.tool()
+@recorded_tool
+def get_call_graph(name: str, depth: int = 1) -> str:
+    """
+    Get the complete call graph for a function, showing both callers and callees.
+    This provides a comprehensive view of a function's relationships in the binary.
+
+    Args:
+        name: Function name to get the call graph for
+        depth: How many levels deep to traverse (1-5, default: 1).
+               Higher depth gives a more complete picture but may be large.
+
+    Returns:
+        Call graph showing incoming callers and outgoing callees with addresses
+
+    Example:
+        get_call_graph("main", depth=2)  # Show 2 levels of calls
+    """
+    return "\n".join(safe_get("get_call_graph", {"name": name, "depth": depth}))
+
+
+@mcp.tool()
+@recorded_tool
+def list_undefined_functions(offset: int = 0, limit: int = 100) -> list:
+    """
+    List functions that still have auto-generated names (FUN_*, thunk_*, etc.)
+    and have not been renamed by an analyst. Useful for identifying functions
+    that need analysis and for prioritizing reverse engineering work.
+
+    Each result includes the function's body size, parameter count, caller count,
+    and symbol source to help prioritize which functions to analyze first.
+
+    Args:
+        offset: Pagination offset (default: 0)
+        limit: Maximum number of results (default: 100)
+
+    Returns:
+        List of undefined/auto-named functions with metadata for triage
+    """
+    return safe_get("list_undefined_functions", {"offset": offset, "limit": limit})
+
+
+@mcp.tool()
+@recorded_tool
+def get_function_cfg_info(address: str) -> str:
+    """
+    Get control flow graph metrics for a function including basic block count,
+    branch count, call count, cyclomatic complexity, and other structural info.
+    Useful for triaging functions and identifying complex code that may warrant
+    deeper analysis (e.g., encryption routines, parsers, state machines).
+
+    Args:
+        address: Function address (e.g. "0x401000")
+
+    Returns:
+        Detailed CFG metrics including:
+        - Body size and instruction count
+        - Estimated basic blocks and branch count
+        - Cyclomatic complexity estimate
+        - Decompiled line count
+        - Complexity classification (Low/Moderate/High/Very High)
+    """
+    return "\n".join(safe_get("get_function_cfg_info", {"address": address}))
+
+
+# =============================================================================
 # PATCHING TOOLS (Ghidra)
 # =============================================================================
 

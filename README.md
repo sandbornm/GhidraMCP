@@ -21,6 +21,41 @@ MCP Server + Ghidra Plugin
 - Automatically rename methods and data
 - List methods, classes, imports, and exports
 
+## Semi-Autonomous Reverse Engineering
+
+GhidraMCP provides 90+ MCP tools across static analysis, dynamic analysis, annotation, and patching to enable LLM-driven reverse engineering. Key capability areas:
+
+### Decompilation & Rename
+
+Rename functions and variables directly in the decompilation view to improve readability:
+
+- **`rename_variable_by_address`** - Rename local variables in a function identified by address (more reliable than by name for auto-generated function names like `FUN_00401000`)
+- **`batch_rename`** - Rename multiple functions, variables, and data labels in a single operation for efficient annotation
+- **`rename_function`** / **`rename_function_by_address`** - Rename functions by name or address
+- **`rename_variable`** - Rename local variables within a function by name
+- **`rename_data`** - Rename data labels at specific addresses
+
+### Analysis & Triage
+
+Tools for prioritizing and understanding functions during autonomous analysis:
+
+- **`get_call_graph`** - Get a complete call graph (both callers and callees) with configurable depth (1-5 levels)
+- **`list_undefined_functions`** - Find functions with auto-generated names (FUN_\*, thunk_\*) that need analysis, sorted by metadata (size, caller count, parameters)
+- **`get_function_cfg_info`** - Get control flow metrics including basic block count, cyclomatic complexity, branch count, and complexity classification
+- **`search_functions_by_name`** - Fuzzy search for functions by substring
+
+### Full Tool Categories
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| Static Analysis | 30+ | decompile, disassemble, xrefs, call graphs, strings, CFG info |
+| Annotation | 10+ | rename functions/variables/data, comments, prototypes, type system |
+| Type System | 6 | create/inspect structures, enums, set variable types |
+| Patching | 7 | patch bytes/instructions, NOP regions, export binary |
+| Navigation | 5 | goto address, bookmarks, current selection |
+| Dynamic Analysis (GDB) | 20+ | run, debug, strace, ltrace, checksec, binwalk |
+| Trajectory Recording | 7 | record, analyze, export analysis sessions |
+
 # Installation
 
 ## Prerequisites
@@ -97,6 +132,24 @@ Another MCP client that supports multiple models on the backend is [5ire](https:
 1. Tool Key: ghidra
 2. Name: GhidraMCP
 3. Command: `python /ABSOLUTE_PATH_TO/bridge_mcp_ghidra.py`
+
+# Testing
+
+The project includes a comprehensive Python test suite covering the MCP server bridge and trajectory recording system.
+
+## Running Tests
+
+```bash
+pip install pytest
+python -m pytest tests/ -v
+```
+
+The test suite includes 136 tests covering:
+
+- **MCP Bridge (`test_bridge_mcp_ghidra.py`)** - Tests for all 90+ MCP tools with mocked HTTP responses, including error handling, parameter passing, pagination, and the trajectory recording decorator
+- **Trajectory Recorder (`test_trajectory_recorder.py`)** - Tests for recording, analysis, markdown export, thread safety, session management, and edge cases
+
+Tests mock the Ghidra HTTP server responses so they can run without a live Ghidra instance.
 
 # Building from Source
 1. Copy the following files from your Ghidra directory to this project's `lib/` directory:
