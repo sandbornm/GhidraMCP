@@ -50,10 +50,23 @@ import ghidra.program.model.data.DataType;
 import ghidra.program.model.data.DataTypeManager;
 import ghidra.program.model.data.PointerDataType;
 import ghidra.program.model.data.Undefined1DataType;
+import ghidra.program.model.data.Structure;
+import ghidra.program.model.data.StructureDataType;
+import ghidra.program.model.data.EnumDataType;
+import ghidra.program.model.data.Enum;
+import ghidra.program.model.data.CategoryPath;
+import ghidra.program.model.data.Category;
+import ghidra.program.model.data.DataTypeComponent;
 import ghidra.program.model.listing.Variable;
+import ghidra.program.model.listing.BookmarkManager;
+import ghidra.program.model.listing.Bookmark;
 import ghidra.app.decompiler.component.DecompilerUtils;
 import ghidra.app.decompiler.ClangToken;
+import ghidra.app.cmd.function.CreateFunctionCmd;
+import ghidra.app.services.GoToService;
 import ghidra.framework.options.Options;
+import ghidra.program.model.address.AddressRange;
+import ghidra.program.model.address.AddressRangeIterator;
 
 import java.io.File;
 
@@ -69,6 +82,7 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 @PluginInfo(
     status = PluginStatus.RELEASED,
@@ -414,6 +428,176 @@ public class GhidraMCPPlugin extends Plugin {
         // List available exporters
         server.createContext("/list_exporters", exchange -> {
             sendResponse(exchange, listExporters());
+        });
+
+        // ==================== ENHANCED ANALYSIS ENDPOINTS ====================
+
+        // Get all functions that call a given function (callers)
+        server.createContext("/callers", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String name = qparams.get("name");
+            int offset = parseIntOrDefault(qparams.get("offset"), 0);
+            int limit = parseIntOrDefault(qparams.get("limit"), 100);
+            sendResponse(exchange, getCallers(name, offset, limit));
+        });
+
+        // Get all functions called by a given function (callees)
+        server.createContext("/callees", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String name = qparams.get("name");
+            int offset = parseIntOrDefault(qparams.get("offset"), 0);
+            int limit = parseIntOrDefault(qparams.get("limit"), 100);
+            sendResponse(exchange, getCallees(name, offset, limit));
+        });
+
+        // Get function variables and parameters
+        server.createContext("/get_function_variables", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String address = qparams.get("address");
+            sendResponse(exchange, getFunctionVariables(address));
+        });
+
+        // Create a function at an address
+        server.createContext("/create_function", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String address = params.get("address");
+            String name = params.get("name");
+            sendResponse(exchange, createFunction(address, name));
+        });
+
+        // Delete a function
+        server.createContext("/delete_function", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String address = params.get("address");
+            sendResponse(exchange, deleteFunction(address));
+        });
+
+        // List defined data types
+        server.createContext("/list_data_types", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            int offset = parseIntOrDefault(qparams.get("offset"), 0);
+            int limit = parseIntOrDefault(qparams.get("limit"), 100);
+            String category = qparams.get("category");
+            sendResponse(exchange, listDataTypes(offset, limit, category));
+        });
+
+        // Get structure fields
+        server.createContext("/get_struct_fields", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String name = qparams.get("name");
+            sendResponse(exchange, getStructFields(name));
+        });
+
+        // Create a new structure
+        server.createContext("/create_struct", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String name = params.get("name");
+            int size = parseIntOrDefault(params.get("size"), 0);
+            String category = params.get("category");
+            sendResponse(exchange, createStruct(name, size, category));
+        });
+
+        // Add a field to a structure
+        server.createContext("/add_struct_field", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String structName = params.get("struct_name");
+            String fieldName = params.get("field_name");
+            String fieldType = params.get("field_type");
+            int fieldOffset = parseIntOrDefault(params.get("offset"), -1);
+            int fieldSize = parseIntOrDefault(params.get("size"), 0);
+            sendResponse(exchange, addStructField(structName, fieldName, fieldType, fieldOffset, fieldSize));
+        });
+
+        // Create a new enum
+        server.createContext("/create_enum", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String name = params.get("name");
+            int size = parseIntOrDefault(params.get("size"), 4);
+            String category = params.get("category");
+            sendResponse(exchange, createEnum(name, size, category));
+        });
+
+        // Add a member to an enum
+        server.createContext("/add_enum_member", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String enumName = params.get("enum_name");
+            String memberName = params.get("member_name");
+            long memberValue = Long.parseLong(params.getOrDefault("value", "0"));
+            sendResponse(exchange, addEnumMember(enumName, memberName, memberValue));
+        });
+
+        // Set a bookmark at an address
+        server.createContext("/set_bookmark", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String address = params.get("address");
+            String bookmarkCategory = params.get("category");
+            String comment = params.get("comment");
+            sendResponse(exchange, setBookmark(address, bookmarkCategory, comment));
+        });
+
+        // List all bookmarks
+        server.createContext("/list_bookmarks", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            int offset = parseIntOrDefault(qparams.get("offset"), 0);
+            int limit = parseIntOrDefault(qparams.get("limit"), 100);
+            String category = qparams.get("category");
+            sendResponse(exchange, listBookmarks(offset, limit, category));
+        });
+
+        // Delete a bookmark
+        server.createContext("/delete_bookmark", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String address = params.get("address");
+            String bookmarkCategory = params.get("category");
+            sendResponse(exchange, deleteBookmark(address, bookmarkCategory));
+        });
+
+        // Search memory for byte patterns
+        server.createContext("/search_memory", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String hexPattern = qparams.get("pattern");
+            int maxResults = parseIntOrDefault(qparams.get("max_results"), 100);
+            sendResponse(exchange, searchMemory(hexPattern, maxResults));
+        });
+
+        // Get comprehensive info about an address
+        server.createContext("/get_address_info", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String address = qparams.get("address");
+            sendResponse(exchange, getAddressInfo(address));
+        });
+
+        // Navigate Ghidra UI to an address
+        server.createContext("/goto_address", exchange -> {
+            Map<String, String> params = parsePostParams(exchange);
+            String address = params.get("address");
+            sendResponse(exchange, gotoAddress(address));
+        });
+
+        // Get comprehensive program info / binary metadata
+        server.createContext("/get_program_info", exchange -> {
+            sendResponse(exchange, getProgramInfo());
+        });
+
+        // List all comments in the program
+        server.createContext("/list_comments", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            int offset = parseIntOrDefault(qparams.get("offset"), 0);
+            int limit = parseIntOrDefault(qparams.get("limit"), 100);
+            String commentType = qparams.get("type");
+            sendResponse(exchange, listComments(offset, limit, commentType));
+        });
+
+        // Trigger auto-analysis
+        server.createContext("/run_auto_analysis", exchange -> {
+            sendResponse(exchange, runAutoAnalysis());
+        });
+
+        // Ghidra help reference for scripting concepts
+        server.createContext("/ghidra_help", exchange -> {
+            Map<String, String> qparams = parseQueryParams(exchange);
+            String topic = qparams.get("topic");
+            sendResponse(exchange, getGhidraHelp(topic));
         });
 
         server.setExecutor(null);
@@ -1609,6 +1793,1190 @@ public class GhidraMCPPlugin extends Plugin {
             }
         }
         return null;
+    }
+
+    // ----------------------------------------------------------------------------------
+    // ENHANCED ANALYSIS METHODS
+    // ----------------------------------------------------------------------------------
+
+    /**
+     * Get all functions that call a given function (callers / incoming references)
+     */
+    private String getCallers(String functionName, int offset, int limit) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (functionName == null || functionName.isEmpty()) return "Function name is required";
+
+        Function targetFunc = null;
+        for (Function f : program.getFunctionManager().getFunctions(true)) {
+            if (f.getName().equals(functionName)) {
+                targetFunc = f;
+                break;
+            }
+        }
+        if (targetFunc == null) return "Function not found: " + functionName;
+
+        Set<String> callers = new LinkedHashSet<>();
+        ReferenceManager refManager = program.getReferenceManager();
+        ReferenceIterator refs = refManager.getReferencesTo(targetFunc.getEntryPoint());
+
+        while (refs.hasNext()) {
+            Reference ref = refs.next();
+            if (ref.getReferenceType().isCall()) {
+                Function caller = program.getFunctionManager().getFunctionContaining(ref.getFromAddress());
+                if (caller != null) {
+                    callers.add(String.format("%s @ %s -> %s [%s]",
+                        caller.getName(), ref.getFromAddress(),
+                        functionName, ref.getReferenceType().getName()));
+                }
+            }
+        }
+
+        if (callers.isEmpty()) return "No callers found for function: " + functionName;
+        return paginateList(new ArrayList<>(callers), offset, limit);
+    }
+
+    /**
+     * Get all functions called by a given function (callees / outgoing calls)
+     */
+    private String getCallees(String functionName, int offset, int limit) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (functionName == null || functionName.isEmpty()) return "Function name is required";
+
+        Function targetFunc = null;
+        for (Function f : program.getFunctionManager().getFunctions(true)) {
+            if (f.getName().equals(functionName)) {
+                targetFunc = f;
+                break;
+            }
+        }
+        if (targetFunc == null) return "Function not found: " + functionName;
+
+        Set<String> callees = new LinkedHashSet<>();
+        ReferenceManager refManager = program.getReferenceManager();
+        AddressRangeIterator bodyRanges = targetFunc.getBody().getAddressRanges();
+
+        while (bodyRanges.hasNext()) {
+            AddressRange range = bodyRanges.next();
+            Address addr = range.getMinAddress();
+            while (addr != null && addr.compareTo(range.getMaxAddress()) <= 0) {
+                Reference[] refsFrom = refManager.getReferencesFrom(addr);
+                for (Reference ref : refsFrom) {
+                    if (ref.getReferenceType().isCall()) {
+                        Function callee = program.getFunctionManager().getFunctionAt(ref.getToAddress());
+                        if (callee == null) {
+                            callee = program.getFunctionManager().getFunctionContaining(ref.getToAddress());
+                        }
+                        String calleeName = (callee != null) ? callee.getName() : "unknown@" + ref.getToAddress();
+                        callees.add(String.format("%s calls %s @ %s [%s]",
+                            functionName, calleeName, ref.getToAddress(),
+                            ref.getReferenceType().getName()));
+                    }
+                }
+                addr = addr.next();
+            }
+        }
+
+        if (callees.isEmpty()) return "No callees found for function: " + functionName;
+        return paginateList(new ArrayList<>(callees), offset, limit);
+    }
+
+    /**
+     * Get all variables and parameters for a function at the given address
+     */
+    private String getFunctionVariables(String addressStr) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (addressStr == null || addressStr.isEmpty()) return "Address is required";
+
+        try {
+            Address addr = program.getAddressFactory().getAddress(addressStr);
+            Function func = getFunctionForAddress(program, addr);
+            if (func == null) return "No function found at address " + addressStr;
+
+            StringBuilder result = new StringBuilder();
+            result.append("Function: ").append(func.getName()).append(" @ ").append(func.getEntryPoint()).append("\n");
+            result.append("Signature: ").append(func.getSignature()).append("\n\n");
+
+            // Return type
+            result.append("Return type: ").append(func.getReturnType().getName()).append("\n\n");
+
+            // Parameters
+            Parameter[] params = func.getParameters();
+            result.append("Parameters (").append(params.length).append("):\n");
+            for (Parameter p : params) {
+                result.append(String.format("  %s %s [%s] (ordinal=%d)\n",
+                    p.getDataType().getName(), p.getName(),
+                    p.getVariableStorage(), p.getOrdinal()));
+            }
+
+            // Local variables
+            Variable[] locals = func.getLocalVariables();
+            result.append("\nLocal variables (").append(locals.length).append("):\n");
+            for (Variable v : locals) {
+                result.append(String.format("  %s %s [%s]\n",
+                    v.getDataType().getName(), v.getName(),
+                    v.getVariableStorage()));
+            }
+
+            // Stack frame info
+            result.append("\nStack frame size: ").append(func.getStackFrame().getFrameSize());
+            result.append("\nStack parameter offset: ").append(func.getStackFrame().getParameterOffset());
+
+            return result.toString();
+        } catch (Exception e) {
+            return "Error getting function variables: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Create a new function at the specified address
+     */
+    private String createFunction(String addressStr, String name) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (addressStr == null || addressStr.isEmpty()) return "Address is required";
+
+        AtomicReference<String> result = new AtomicReference<>("Failed to create function");
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("Create function at " + addressStr);
+                boolean success = false;
+                try {
+                    Address addr = program.getAddressFactory().getAddress(addressStr);
+
+                    // Check if function already exists
+                    Function existing = program.getFunctionManager().getFunctionAt(addr);
+                    if (existing != null) {
+                        result.set("Function already exists at " + addressStr + ": " + existing.getName());
+                        return;
+                    }
+
+                    CreateFunctionCmd cmd = new CreateFunctionCmd(addr);
+                    boolean created = cmd.applyTo(program, new ConsoleTaskMonitor());
+
+                    if (created) {
+                        Function newFunc = program.getFunctionManager().getFunctionAt(addr);
+                        if (newFunc != null && name != null && !name.isEmpty()) {
+                            newFunc.setName(name, SourceType.USER_DEFINED);
+                        }
+                        String funcName = (newFunc != null) ? newFunc.getName() : "unknown";
+                        result.set("Created function " + funcName + " at " + addr);
+                        success = true;
+                    } else {
+                        result.set("Failed to create function at " + addressStr + ": " + cmd.getStatusMsg());
+                    }
+                } catch (Exception e) {
+                    result.set("Error creating function: " + e.getMessage());
+                    Msg.error(this, "Error creating function", e);
+                } finally {
+                    program.endTransaction(tx, success);
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to create function on Swing thread: " + e.getMessage();
+        }
+
+        return result.get();
+    }
+
+    /**
+     * Delete a function at the specified address
+     */
+    private String deleteFunction(String addressStr) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (addressStr == null || addressStr.isEmpty()) return "Address is required";
+
+        AtomicReference<String> result = new AtomicReference<>("Failed to delete function");
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("Delete function at " + addressStr);
+                boolean success = false;
+                try {
+                    Address addr = program.getAddressFactory().getAddress(addressStr);
+                    Function func = program.getFunctionManager().getFunctionAt(addr);
+
+                    if (func == null) {
+                        result.set("No function found at " + addressStr);
+                        return;
+                    }
+
+                    String funcName = func.getName();
+                    program.getFunctionManager().removeFunction(addr);
+                    result.set("Deleted function " + funcName + " at " + addr);
+                    success = true;
+                } catch (Exception e) {
+                    result.set("Error deleting function: " + e.getMessage());
+                    Msg.error(this, "Error deleting function", e);
+                } finally {
+                    program.endTransaction(tx, success);
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to delete function on Swing thread: " + e.getMessage();
+        }
+
+        return result.get();
+    }
+
+    /**
+     * List all defined data types in the program
+     */
+    private String listDataTypes(int offset, int limit, String categoryFilter) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+
+        DataTypeManager dtm = program.getDataTypeManager();
+        List<String> lines = new ArrayList<>();
+
+        Iterator<DataType> allTypes = dtm.getAllDataTypes();
+        while (allTypes.hasNext()) {
+            DataType dt = allTypes.next();
+            String catPath = dt.getCategoryPath().getPath();
+
+            if (categoryFilter != null && !categoryFilter.isEmpty()) {
+                if (!catPath.toLowerCase().contains(categoryFilter.toLowerCase())) {
+                    continue;
+                }
+            }
+
+            String typeKind;
+            if (dt instanceof Structure) {
+                typeKind = "struct";
+            } else if (dt instanceof Enum) {
+                typeKind = "enum";
+            } else if (dt instanceof ghidra.program.model.data.TypeDef) {
+                typeKind = "typedef";
+            } else if (dt instanceof ghidra.program.model.data.FunctionDefinition) {
+                typeKind = "funcdef";
+            } else {
+                typeKind = "other";
+            }
+
+            lines.add(String.format("[%s] %s (size=%d, category=%s)",
+                typeKind, dt.getPathName(), dt.getLength(), catPath));
+        }
+
+        Collections.sort(lines);
+        if (lines.isEmpty()) return "No data types found";
+        return paginateList(lines, offset, limit);
+    }
+
+    /**
+     * Get the fields of a structure by name
+     */
+    private String getStructFields(String structName) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (structName == null || structName.isEmpty()) return "Structure name is required";
+
+        DataTypeManager dtm = program.getDataTypeManager();
+        DataType found = findDataTypeByNameInAllCategories(dtm, structName);
+
+        if (found == null) return "Structure not found: " + structName;
+        if (!(found instanceof Structure)) return structName + " is not a structure (it is " + found.getClass().getSimpleName() + ")";
+
+        Structure struct = (Structure) found;
+        StringBuilder result = new StringBuilder();
+        result.append("Structure: ").append(struct.getPathName()).append("\n");
+        result.append("Size: ").append(struct.getLength()).append(" bytes\n");
+        result.append("Alignment: ").append(struct.getAlignment()).append("\n\n");
+        result.append("Fields:\n");
+
+        DataTypeComponent[] components = struct.getComponents();
+        for (DataTypeComponent comp : components) {
+            String fieldName = comp.getFieldName() != null ? comp.getFieldName() : "(unnamed)";
+            String comment = comp.getComment() != null ? " // " + comp.getComment() : "";
+            result.append(String.format("  offset=0x%x size=%d %s %s%s\n",
+                comp.getOffset(), comp.getLength(),
+                comp.getDataType().getName(), fieldName, comment));
+        }
+
+        return result.toString();
+    }
+
+    /**
+     * Create a new structure data type
+     */
+    private String createStruct(String name, int size, String categoryStr) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (name == null || name.isEmpty()) return "Structure name is required";
+
+        AtomicReference<String> result = new AtomicReference<>("Failed to create structure");
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("Create structure " + name);
+                boolean success = false;
+                try {
+                    DataTypeManager dtm = program.getDataTypeManager();
+                    CategoryPath catPath = (categoryStr != null && !categoryStr.isEmpty())
+                        ? new CategoryPath(categoryStr)
+                        : CategoryPath.ROOT;
+
+                    StructureDataType struct = new StructureDataType(catPath, name, size, dtm);
+                    DataType resolved = dtm.addDataType(struct, ghidra.program.model.data.DataTypeConflictHandler.REPLACE_HANDLER);
+
+                    result.set("Created structure: " + resolved.getPathName() + " (size=" + resolved.getLength() + ")");
+                    success = true;
+                } catch (Exception e) {
+                    result.set("Error creating structure: " + e.getMessage());
+                    Msg.error(this, "Error creating structure", e);
+                } finally {
+                    program.endTransaction(tx, success);
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to create structure on Swing thread: " + e.getMessage();
+        }
+
+        return result.get();
+    }
+
+    /**
+     * Add a field to a structure
+     */
+    private String addStructField(String structName, String fieldName, String fieldType, int fieldOffset, int fieldSize) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (structName == null || structName.isEmpty()) return "Structure name is required";
+        if (fieldType == null || fieldType.isEmpty()) return "Field type is required";
+
+        AtomicReference<String> result = new AtomicReference<>("Failed to add field");
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("Add field to " + structName);
+                boolean success = false;
+                try {
+                    DataTypeManager dtm = program.getDataTypeManager();
+                    DataType found = findDataTypeByNameInAllCategories(dtm, structName);
+                    if (found == null || !(found instanceof Structure)) {
+                        result.set("Structure not found: " + structName);
+                        return;
+                    }
+
+                    Structure struct = (Structure) found;
+                    DataType fType = resolveDataType(dtm, fieldType);
+                    if (fType == null) {
+                        result.set("Could not resolve field type: " + fieldType);
+                        return;
+                    }
+
+                    String fName = (fieldName != null && !fieldName.isEmpty()) ? fieldName : null;
+
+                    if (fieldOffset >= 0) {
+                        // Insert at specific offset
+                        int actualSize = (fieldSize > 0) ? fieldSize : fType.getLength();
+                        struct.replaceAtOffset(fieldOffset, fType, actualSize, fName, null);
+                        result.set(String.format("Added field %s (%s) at offset 0x%x in %s",
+                            fName != null ? fName : "(auto)", fType.getName(), fieldOffset, structName));
+                    } else {
+                        // Append to end
+                        struct.add(fType, (fieldSize > 0) ? fieldSize : fType.getLength(), fName, null);
+                        result.set(String.format("Appended field %s (%s) to %s",
+                            fName != null ? fName : "(auto)", fType.getName(), structName));
+                    }
+                    success = true;
+                } catch (Exception e) {
+                    result.set("Error adding field: " + e.getMessage());
+                    Msg.error(this, "Error adding struct field", e);
+                } finally {
+                    program.endTransaction(tx, success);
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to add struct field on Swing thread: " + e.getMessage();
+        }
+
+        return result.get();
+    }
+
+    /**
+     * Create a new enum data type
+     */
+    private String createEnum(String name, int size, String categoryStr) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (name == null || name.isEmpty()) return "Enum name is required";
+
+        AtomicReference<String> result = new AtomicReference<>("Failed to create enum");
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("Create enum " + name);
+                boolean success = false;
+                try {
+                    DataTypeManager dtm = program.getDataTypeManager();
+                    CategoryPath catPath = (categoryStr != null && !categoryStr.isEmpty())
+                        ? new CategoryPath(categoryStr)
+                        : CategoryPath.ROOT;
+
+                    EnumDataType enumType = new EnumDataType(catPath, name, size, dtm);
+                    DataType resolved = dtm.addDataType(enumType, ghidra.program.model.data.DataTypeConflictHandler.REPLACE_HANDLER);
+
+                    result.set("Created enum: " + resolved.getPathName() + " (size=" + resolved.getLength() + ")");
+                    success = true;
+                } catch (Exception e) {
+                    result.set("Error creating enum: " + e.getMessage());
+                    Msg.error(this, "Error creating enum", e);
+                } finally {
+                    program.endTransaction(tx, success);
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to create enum on Swing thread: " + e.getMessage();
+        }
+
+        return result.get();
+    }
+
+    /**
+     * Add a member to an enum
+     */
+    private String addEnumMember(String enumName, String memberName, long memberValue) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (enumName == null || enumName.isEmpty()) return "Enum name is required";
+        if (memberName == null || memberName.isEmpty()) return "Member name is required";
+
+        AtomicReference<String> result = new AtomicReference<>("Failed to add enum member");
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("Add enum member to " + enumName);
+                boolean success = false;
+                try {
+                    DataTypeManager dtm = program.getDataTypeManager();
+                    DataType found = findDataTypeByNameInAllCategories(dtm, enumName);
+                    if (found == null || !(found instanceof Enum)) {
+                        result.set("Enum not found: " + enumName);
+                        return;
+                    }
+
+                    Enum enumType = (Enum) found;
+                    enumType.add(memberName, memberValue);
+                    result.set(String.format("Added %s = %d (0x%x) to enum %s",
+                        memberName, memberValue, memberValue, enumName));
+                    success = true;
+                } catch (Exception e) {
+                    result.set("Error adding enum member: " + e.getMessage());
+                    Msg.error(this, "Error adding enum member", e);
+                } finally {
+                    program.endTransaction(tx, success);
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to add enum member on Swing thread: " + e.getMessage();
+        }
+
+        return result.get();
+    }
+
+    /**
+     * Set a bookmark at the specified address
+     */
+    private String setBookmark(String addressStr, String category, String comment) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (addressStr == null || addressStr.isEmpty()) return "Address is required";
+
+        String bookmarkCategory = (category != null && !category.isEmpty()) ? category : "Analysis";
+        String bookmarkComment = (comment != null && !comment.isEmpty()) ? comment : "";
+
+        AtomicReference<String> result = new AtomicReference<>("Failed to set bookmark");
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("Set bookmark at " + addressStr);
+                boolean success = false;
+                try {
+                    Address addr = program.getAddressFactory().getAddress(addressStr);
+                    BookmarkManager bm = program.getBookmarkManager();
+                    bm.setBookmark(addr, "Note", bookmarkCategory, bookmarkComment);
+                    result.set(String.format("Bookmark set at %s [%s]: %s", addr, bookmarkCategory, bookmarkComment));
+                    success = true;
+                } catch (Exception e) {
+                    result.set("Error setting bookmark: " + e.getMessage());
+                    Msg.error(this, "Error setting bookmark", e);
+                } finally {
+                    program.endTransaction(tx, success);
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to set bookmark on Swing thread: " + e.getMessage();
+        }
+
+        return result.get();
+    }
+
+    /**
+     * List all bookmarks in the program
+     */
+    private String listBookmarks(int offset, int limit, String categoryFilter) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+
+        BookmarkManager bm = program.getBookmarkManager();
+        List<String> lines = new ArrayList<>();
+
+        Iterator<Bookmark> bookmarks = bm.getBookmarksIterator();
+        while (bookmarks.hasNext()) {
+            Bookmark b = bookmarks.next();
+            if (categoryFilter != null && !categoryFilter.isEmpty()) {
+                if (!b.getCategory().equalsIgnoreCase(categoryFilter)) {
+                    continue;
+                }
+            }
+            Function func = program.getFunctionManager().getFunctionContaining(b.getAddress());
+            String funcInfo = (func != null) ? " in " + func.getName() : "";
+            lines.add(String.format("%s [%s/%s]%s: %s",
+                b.getAddress(), b.getTypeString(), b.getCategory(),
+                funcInfo, b.getComment()));
+        }
+
+        if (lines.isEmpty()) return "No bookmarks found";
+        return paginateList(lines, offset, limit);
+    }
+
+    /**
+     * Delete a bookmark at the specified address
+     */
+    private String deleteBookmark(String addressStr, String category) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (addressStr == null || addressStr.isEmpty()) return "Address is required";
+
+        AtomicReference<String> result = new AtomicReference<>("Failed to delete bookmark");
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                int tx = program.startTransaction("Delete bookmark at " + addressStr);
+                boolean success = false;
+                try {
+                    Address addr = program.getAddressFactory().getAddress(addressStr);
+                    BookmarkManager bm = program.getBookmarkManager();
+                    Bookmark[] bookmarks = bm.getBookmarks(addr);
+
+                    int removed = 0;
+                    for (Bookmark b : bookmarks) {
+                        if (category == null || category.isEmpty() || b.getCategory().equalsIgnoreCase(category)) {
+                            bm.removeBookmark(b);
+                            removed++;
+                        }
+                    }
+
+                    if (removed > 0) {
+                        result.set("Removed " + removed + " bookmark(s) at " + addr);
+                        success = true;
+                    } else {
+                        result.set("No bookmarks found at " + addr);
+                    }
+                } catch (Exception e) {
+                    result.set("Error deleting bookmark: " + e.getMessage());
+                    Msg.error(this, "Error deleting bookmark", e);
+                } finally {
+                    program.endTransaction(tx, success);
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to delete bookmark on Swing thread: " + e.getMessage();
+        }
+
+        return result.get();
+    }
+
+    /**
+     * Search memory for a byte pattern
+     */
+    private String searchMemory(String hexPattern, int maxResults) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (hexPattern == null || hexPattern.isEmpty()) return "Hex pattern is required";
+
+        // Parse hex pattern (supports "90 90" and "9090" and "90 ?? 90" for wildcards)
+        hexPattern = hexPattern.trim();
+        String[] parts = hexPattern.split("\\s+");
+
+        // Build byte array and mask for wildcard support
+        List<Byte> patternBytes = new ArrayList<>();
+        List<Byte> maskBytes = new ArrayList<>();
+
+        for (String part : parts) {
+            if (part.length() == 2) {
+                if (part.equals("??")) {
+                    patternBytes.add((byte) 0);
+                    maskBytes.add((byte) 0);
+                } else {
+                    patternBytes.add((byte) Integer.parseInt(part, 16));
+                    maskBytes.add((byte) 0xFF);
+                }
+            } else {
+                // Consecutive hex without spaces
+                for (int i = 0; i < part.length(); i += 2) {
+                    String byteStr = part.substring(i, Math.min(i + 2, part.length()));
+                    if (byteStr.equals("??")) {
+                        patternBytes.add((byte) 0);
+                        maskBytes.add((byte) 0);
+                    } else {
+                        patternBytes.add((byte) Integer.parseInt(byteStr, 16));
+                        maskBytes.add((byte) 0xFF);
+                    }
+                }
+            }
+        }
+
+        byte[] pattern = new byte[patternBytes.size()];
+        byte[] mask = new byte[maskBytes.size()];
+        for (int i = 0; i < pattern.length; i++) {
+            pattern[i] = patternBytes.get(i);
+            mask[i] = maskBytes.get(i);
+        }
+
+        Memory memory = program.getMemory();
+        List<String> results = new ArrayList<>();
+        Address searchAddr = program.getMinAddress();
+
+        try {
+            while (searchAddr != null && results.size() < maxResults) {
+                Address found = memory.findBytes(searchAddr, pattern, mask, true, new ConsoleTaskMonitor());
+                if (found == null) break;
+
+                Function func = program.getFunctionManager().getFunctionContaining(found);
+                String funcInfo = (func != null) ? " in " + func.getName() : "";
+                MemoryBlock block = memory.getBlock(found);
+                String blockInfo = (block != null) ? " [" + block.getName() + "]" : "";
+
+                results.add(String.format("%s%s%s", found, blockInfo, funcInfo));
+
+                // Move to next byte after the found location
+                searchAddr = found.add(1);
+            }
+        } catch (Exception e) {
+            return "Error searching memory: " + e.getMessage();
+        }
+
+        if (results.isEmpty()) return "Pattern not found: " + hexPattern;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("Found %d match(es) for pattern %s:\n", results.size(), hexPattern));
+        for (String r : results) {
+            sb.append(r).append("\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Get comprehensive information about what's at a given address
+     */
+    private String getAddressInfo(String addressStr) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (addressStr == null || addressStr.isEmpty()) return "Address is required";
+
+        try {
+            Address addr = program.getAddressFactory().getAddress(addressStr);
+            StringBuilder result = new StringBuilder();
+            result.append("Address: ").append(addr).append("\n\n");
+
+            // Memory block info
+            MemoryBlock block = program.getMemory().getBlock(addr);
+            if (block != null) {
+                result.append("Memory Block: ").append(block.getName()).append("\n");
+                result.append("  Range: ").append(block.getStart()).append(" - ").append(block.getEnd()).append("\n");
+                result.append("  Permissions: ");
+                if (block.isRead()) result.append("R");
+                if (block.isWrite()) result.append("W");
+                if (block.isExecute()) result.append("X");
+                result.append("\n  Type: ").append(block.getType()).append("\n\n");
+            }
+
+            // Function info
+            Function func = program.getFunctionManager().getFunctionAt(addr);
+            if (func != null) {
+                result.append("Function entry: ").append(func.getName()).append("\n");
+                result.append("  Signature: ").append(func.getSignature()).append("\n");
+                result.append("  Body: ").append(func.getBody().getMinAddress()).append(" - ")
+                    .append(func.getBody().getMaxAddress()).append("\n\n");
+            } else {
+                Function containing = program.getFunctionManager().getFunctionContaining(addr);
+                if (containing != null) {
+                    result.append("Inside function: ").append(containing.getName())
+                        .append(" @ ").append(containing.getEntryPoint()).append("\n\n");
+                }
+            }
+
+            // Instruction info
+            Instruction instr = program.getListing().getInstructionAt(addr);
+            if (instr != null) {
+                result.append("Instruction: ").append(instr.toString()).append("\n");
+                result.append("  Length: ").append(instr.getLength()).append(" bytes\n");
+                result.append("  Bytes: ").append(bytesToHex(instr.getBytes())).append("\n");
+                result.append("  Mnemonic: ").append(instr.getMnemonicString()).append("\n");
+                int numOps = instr.getNumOperands();
+                for (int i = 0; i < numOps; i++) {
+                    result.append("  Operand ").append(i).append(": ")
+                        .append(instr.getDefaultOperandRepresentation(i)).append("\n");
+                }
+                result.append("\n");
+            }
+
+            // Data info
+            Data data = program.getListing().getDataAt(addr);
+            if (data != null && data.isDefined()) {
+                result.append("Data: ").append(data.getDataType().getName()).append("\n");
+                result.append("  Label: ").append(data.getLabel() != null ? data.getLabel() : "(none)").append("\n");
+                result.append("  Value: ").append(escapeNonAscii(data.getDefaultValueRepresentation())).append("\n");
+                result.append("  Size: ").append(data.getLength()).append(" bytes\n\n");
+            }
+
+            // Symbol info
+            Symbol[] symbols = program.getSymbolTable().getSymbols(addr);
+            if (symbols.length > 0) {
+                result.append("Symbols:\n");
+                for (Symbol s : symbols) {
+                    result.append(String.format("  %s (type=%s, source=%s, primary=%s)\n",
+                        s.getName(), s.getSymbolType(), s.getSource(), s.isPrimary()));
+                }
+                result.append("\n");
+            }
+
+            // Comments
+            Listing listing = program.getListing();
+            String[] commentTypes = {"EOL", "Pre", "Post", "Plate", "Repeatable"};
+            int[] commentTypeConstants = {
+                CodeUnit.EOL_COMMENT, CodeUnit.PRE_COMMENT, CodeUnit.POST_COMMENT,
+                CodeUnit.PLATE_COMMENT, CodeUnit.REPEATABLE_COMMENT
+            };
+            boolean hasComments = false;
+            for (int i = 0; i < commentTypes.length; i++) {
+                String comment = listing.getComment(commentTypeConstants[i], addr);
+                if (comment != null) {
+                    if (!hasComments) {
+                        result.append("Comments:\n");
+                        hasComments = true;
+                    }
+                    result.append(String.format("  %s: %s\n", commentTypes[i], comment));
+                }
+            }
+            if (hasComments) result.append("\n");
+
+            // References to this address
+            Reference[] refsTo = program.getReferenceManager().getReferencesTo(addr).toArray(new Reference[0]);
+            if (refsTo.length > 0) {
+                result.append("References TO this address (").append(refsTo.length).append("):\n");
+                int shown = Math.min(refsTo.length, 10);
+                for (int i = 0; i < shown; i++) {
+                    result.append(String.format("  from %s [%s]\n",
+                        refsTo[i].getFromAddress(), refsTo[i].getReferenceType().getName()));
+                }
+                if (refsTo.length > 10) result.append("  ... and ").append(refsTo.length - 10).append(" more\n");
+                result.append("\n");
+            }
+
+            // References from this address
+            Reference[] refsFrom = program.getReferenceManager().getReferencesFrom(addr);
+            if (refsFrom.length > 0) {
+                result.append("References FROM this address (").append(refsFrom.length).append("):\n");
+                for (Reference ref : refsFrom) {
+                    result.append(String.format("  to %s [%s]\n",
+                        ref.getToAddress(), ref.getReferenceType().getName()));
+                }
+            }
+
+            return result.toString();
+        } catch (Exception e) {
+            return "Error getting address info: " + e.getMessage();
+        }
+    }
+
+    /**
+     * Navigate the Ghidra UI to a specific address
+     */
+    private String gotoAddress(String addressStr) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+        if (addressStr == null || addressStr.isEmpty()) return "Address is required";
+
+        AtomicReference<String> result = new AtomicReference<>("Failed to navigate");
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    Address addr = program.getAddressFactory().getAddress(addressStr);
+                    GoToService goToService = tool.getService(GoToService.class);
+                    if (goToService != null) {
+                        boolean success = goToService.goTo(addr);
+                        if (success) {
+                            Function func = program.getFunctionManager().getFunctionContaining(addr);
+                            String funcInfo = (func != null) ? " (in " + func.getName() + ")" : "";
+                            result.set("Navigated to " + addr + funcInfo);
+                        } else {
+                            result.set("Could not navigate to " + addr);
+                        }
+                    } else {
+                        result.set("GoTo service not available");
+                    }
+                } catch (Exception e) {
+                    result.set("Error navigating: " + e.getMessage());
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to navigate on Swing thread: " + e.getMessage();
+        }
+
+        return result.get();
+    }
+
+    /**
+     * Get comprehensive program/binary metadata
+     */
+    private String getProgramInfo() {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+
+        StringBuilder result = new StringBuilder();
+        result.append("=== Program Information ===\n\n");
+        result.append("Name: ").append(program.getName()).append("\n");
+        result.append("Language: ").append(program.getLanguage().getLanguageID()).append("\n");
+        result.append("Compiler Spec: ").append(program.getCompilerSpec().getCompilerSpecID()).append("\n");
+        result.append("Processor: ").append(program.getLanguage().getProcessor()).append("\n");
+        result.append("Endian: ").append(program.getLanguage().isBigEndian() ? "Big" : "Little").append("\n");
+        result.append("Address Size: ").append(program.getAddressFactory().getDefaultAddressSpace().getSize()).append(" bits\n");
+        result.append("Executable Format: ").append(program.getExecutableFormat()).append("\n");
+        result.append("Executable Path: ").append(program.getExecutablePath()).append("\n");
+
+        String md5 = program.getExecutableMD5();
+        if (md5 != null && !md5.isEmpty()) {
+            result.append("MD5: ").append(md5).append("\n");
+        }
+        String sha256 = program.getExecutableSHA256();
+        if (sha256 != null && !sha256.isEmpty()) {
+            result.append("SHA256: ").append(sha256).append("\n");
+        }
+
+        result.append("\nImage Base: ").append(program.getImageBase()).append("\n");
+        result.append("Min Address: ").append(program.getMinAddress()).append("\n");
+        result.append("Max Address: ").append(program.getMaxAddress()).append("\n");
+
+        // Count functions
+        int funcCount = 0;
+        for (Function f : program.getFunctionManager().getFunctions(true)) {
+            funcCount++;
+        }
+        result.append("\nFunction Count: ").append(funcCount).append("\n");
+
+        // Memory blocks summary
+        MemoryBlock[] blocks = program.getMemory().getBlocks();
+        result.append("Memory Blocks: ").append(blocks.length).append("\n");
+        long totalSize = 0;
+        for (MemoryBlock b : blocks) {
+            totalSize += b.getSize();
+        }
+        result.append("Total Memory: ").append(totalSize).append(" bytes\n");
+
+        // Symbol counts
+        SymbolTable symTable = program.getSymbolTable();
+        result.append("Symbol Count: ").append(symTable.getNumSymbols()).append("\n");
+
+        // Bookmark counts
+        BookmarkManager bm = program.getBookmarkManager();
+        result.append("Bookmark Count: ").append(bm.getBookmarkCount()).append("\n");
+
+        // Data type counts
+        DataTypeManager dtm = program.getDataTypeManager();
+        int dtCount = 0;
+        Iterator<DataType> dtIter = dtm.getAllDataTypes();
+        while (dtIter.hasNext()) { dtIter.next(); dtCount++; }
+        result.append("Data Type Count: ").append(dtCount).append("\n");
+
+        return result.toString();
+    }
+
+    /**
+     * List all comments in the program
+     */
+    private String listComments(int offset, int limit, String commentTypeFilter) {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+
+        List<String> lines = new ArrayList<>();
+        Listing listing = program.getListing();
+
+        // Define which comment types to search
+        int[] commentTypes;
+        String[] commentTypeNames;
+
+        if (commentTypeFilter != null && !commentTypeFilter.isEmpty()) {
+            switch (commentTypeFilter.toLowerCase()) {
+                case "eol":
+                    commentTypes = new int[]{CodeUnit.EOL_COMMENT};
+                    commentTypeNames = new String[]{"EOL"};
+                    break;
+                case "pre":
+                    commentTypes = new int[]{CodeUnit.PRE_COMMENT};
+                    commentTypeNames = new String[]{"Pre"};
+                    break;
+                case "post":
+                    commentTypes = new int[]{CodeUnit.POST_COMMENT};
+                    commentTypeNames = new String[]{"Post"};
+                    break;
+                case "plate":
+                    commentTypes = new int[]{CodeUnit.PLATE_COMMENT};
+                    commentTypeNames = new String[]{"Plate"};
+                    break;
+                case "repeatable":
+                    commentTypes = new int[]{CodeUnit.REPEATABLE_COMMENT};
+                    commentTypeNames = new String[]{"Repeatable"};
+                    break;
+                default:
+                    commentTypes = new int[]{CodeUnit.EOL_COMMENT, CodeUnit.PRE_COMMENT,
+                        CodeUnit.POST_COMMENT, CodeUnit.PLATE_COMMENT, CodeUnit.REPEATABLE_COMMENT};
+                    commentTypeNames = new String[]{"EOL", "Pre", "Post", "Plate", "Repeatable"};
+                    break;
+            }
+        } else {
+            commentTypes = new int[]{CodeUnit.EOL_COMMENT, CodeUnit.PRE_COMMENT,
+                CodeUnit.POST_COMMENT, CodeUnit.PLATE_COMMENT, CodeUnit.REPEATABLE_COMMENT};
+            commentTypeNames = new String[]{"EOL", "Pre", "Post", "Plate", "Repeatable"};
+        }
+
+        // Iterate through all code units looking for comments
+        for (MemoryBlock block : program.getMemory().getBlocks()) {
+            CodeUnitIterator cuIter = listing.getCodeUnits(block.getStart(), true);
+            while (cuIter.hasNext()) {
+                CodeUnit cu = cuIter.next();
+                if (!block.contains(cu.getAddress())) break;
+
+                for (int i = 0; i < commentTypes.length; i++) {
+                    String comment = cu.getComment(commentTypes[i]);
+                    if (comment != null && !comment.isEmpty()) {
+                        Function func = program.getFunctionManager().getFunctionContaining(cu.getAddress());
+                        String funcInfo = (func != null) ? " in " + func.getName() : "";
+                        lines.add(String.format("%s [%s]%s: %s",
+                            cu.getAddress(), commentTypeNames[i], funcInfo, escapeString(comment)));
+                    }
+                }
+            }
+        }
+
+        if (lines.isEmpty()) return "No comments found";
+        return paginateList(lines, offset, limit);
+    }
+
+    /**
+     * Trigger auto-analysis on the current program
+     */
+    private String runAutoAnalysis() {
+        Program program = getCurrentProgram();
+        if (program == null) return "No program loaded";
+
+        AtomicReference<String> result = new AtomicReference<>("Auto-analysis failed");
+
+        try {
+            SwingUtilities.invokeAndWait(() -> {
+                try {
+                    ghidra.app.services.AnalysisService analysisSvc = tool.getService(ghidra.app.services.AnalysisService.class);
+
+                    // Use AutoAnalysisManager as fallback
+                    ghidra.app.plugin.core.analysis.AutoAnalysisManager mgr =
+                        ghidra.app.plugin.core.analysis.AutoAnalysisManager.getAnalysisManager(program);
+
+                    if (mgr != null) {
+                        AddressSet addrSet = new AddressSet(program.getMemory());
+                        mgr.reAnalyzeAll(addrSet);
+                        result.set("Auto-analysis triggered for entire program. Analysis is running in background.");
+                    } else {
+                        result.set("Could not get analysis manager");
+                    }
+                } catch (Exception e) {
+                    result.set("Error triggering auto-analysis: " + e.getMessage());
+                    Msg.error(this, "Error running auto-analysis", e);
+                }
+            });
+        } catch (InterruptedException | InvocationTargetException e) {
+            return "Failed to trigger auto-analysis on Swing thread: " + e.getMessage();
+        }
+
+        return result.get();
+    }
+
+    /**
+     * Provide Ghidra scripting/analysis help reference
+     * Returns guidance on how to accomplish common RE tasks in Ghidra
+     */
+    private String getGhidraHelp(String topic) {
+        if (topic == null || topic.isEmpty()) {
+            return getGhidraHelpTopics();
+        }
+
+        switch (topic.toLowerCase()) {
+            case "xrefs":
+            case "cross-references":
+            case "references":
+                return "=== Cross-References (XRefs) ===\n\n"
+                    + "Cross-references show where code or data references other locations.\n\n"
+                    + "Available MCP tools:\n"
+                    + "- get_xrefs_to(address): Find all locations that reference a given address\n"
+                    + "- get_xrefs_from(address): Find all locations referenced from a given address\n"
+                    + "- get_function_xrefs(name): Find all callers of a function by name\n"
+                    + "- get_callers(name): Get functions that call a given function\n"
+                    + "- get_callees(name): Get functions called by a given function\n\n"
+                    + "In Ghidra UI:\n"
+                    + "- Right-click an address -> References -> Show References To\n"
+                    + "- Window -> Function Call Graph for visual call graph\n"
+                    + "- Right-click function -> References -> Find References To\n";
+
+            case "functions":
+            case "function":
+                return "=== Functions ===\n\n"
+                    + "Available MCP tools:\n"
+                    + "- list_methods(): List all function names (paginated)\n"
+                    + "- list_functions(): List all functions with addresses\n"
+                    + "- search_functions_by_name(query): Search by substring\n"
+                    + "- decompile_function(name): Get C pseudocode by name\n"
+                    + "- decompile_function_by_address(addr): Get C pseudocode by address\n"
+                    + "- disassemble_function(addr): Get assembly listing\n"
+                    + "- get_function_by_address(addr): Get function info at address\n"
+                    + "- get_function_variables(addr): Get all params and local vars\n"
+                    + "- create_function(addr, name): Create function at address\n"
+                    + "- delete_function(addr): Remove function definition\n"
+                    + "- rename_function(old, new): Rename by name\n"
+                    + "- rename_function_by_address(addr, name): Rename by address\n"
+                    + "- set_function_prototype(addr, proto): Set full signature\n\n"
+                    + "Tips:\n"
+                    + "- Use decompile to understand function logic\n"
+                    + "- Rename functions and variables for clarity\n"
+                    + "- Set prototypes to fix calling conventions\n";
+
+            case "types":
+            case "datatypes":
+            case "data types":
+            case "structures":
+            case "structs":
+                return "=== Data Types & Structures ===\n\n"
+                    + "Available MCP tools:\n"
+                    + "- list_data_types(category): List all defined types\n"
+                    + "- get_struct_fields(name): View structure layout\n"
+                    + "- create_struct(name, size): Create a new structure\n"
+                    + "- add_struct_field(struct, field, type, offset): Add field to struct\n"
+                    + "- create_enum(name, size): Create a new enum\n"
+                    + "- add_enum_member(enum, member, value): Add enum member\n"
+                    + "- set_local_variable_type(func_addr, var, type): Change variable type\n\n"
+                    + "Tips:\n"
+                    + "- Create structs to model data layouts (network packets, file headers, etc.)\n"
+                    + "- Use enums to label magic constants (flags, error codes, etc.)\n"
+                    + "- After creating types, apply them to variables for cleaner decompilation\n";
+
+            case "patching":
+            case "patch":
+                return "=== Binary Patching ===\n\n"
+                    + "Available MCP tools:\n"
+                    + "- patch_bytes(addr, hex): Write raw bytes\n"
+                    + "- patch_instruction(addr, asm): Assemble and write instruction\n"
+                    + "- nop_region(start, end): Fill with NOP instructions\n"
+                    + "- get_bytes(addr, len): Read bytes at address\n"
+                    + "- export_binary(path, format): Export patched binary\n"
+                    + "- save_program(): Save changes to Ghidra project\n\n"
+                    + "Tips:\n"
+                    + "- Always read bytes before patching to save originals\n"
+                    + "- Use 'original' format when exporting to preserve file structure\n"
+                    + "- NOP out unwanted checks (e.g., license validation)\n"
+                    + "- Patch conditional jumps to change control flow\n";
+
+            case "navigation":
+            case "nav":
+                return "=== Navigation ===\n\n"
+                    + "Available MCP tools:\n"
+                    + "- get_current_address(): Get selected address in UI\n"
+                    + "- get_current_function(): Get selected function in UI\n"
+                    + "- goto_address(addr): Navigate UI to address\n"
+                    + "- get_address_info(addr): Get detailed info about an address\n"
+                    + "- set_bookmark(addr, category, comment): Mark interesting locations\n"
+                    + "- list_bookmarks(): List all bookmarks\n\n"
+                    + "Tips:\n"
+                    + "- Use bookmarks to track analysis progress\n"
+                    + "- Use goto_address to follow references\n"
+                    + "- get_address_info gives a complete picture of any location\n";
+
+            case "analysis":
+            case "auto-analysis":
+                return "=== Analysis ===\n\n"
+                    + "Available MCP tools:\n"
+                    + "- run_auto_analysis(): Re-run Ghidra's auto-analysis\n"
+                    + "- get_program_info(): Get comprehensive binary metadata\n"
+                    + "- search_memory(pattern): Find byte patterns\n"
+                    + "- list_strings(filter): Find strings in the binary\n"
+                    + "- list_imports(): View imported functions\n"
+                    + "- list_exports(): View exported functions\n"
+                    + "- list_segments(): View memory segments\n\n"
+                    + "Tips:\n"
+                    + "- Run auto-analysis after making significant changes\n"
+                    + "- Start analysis by examining imports/exports and strings\n"
+                    + "- Use memory search to find specific patterns or signatures\n";
+
+            case "comments":
+            case "annotations":
+                return "=== Comments & Annotations ===\n\n"
+                    + "Available MCP tools:\n"
+                    + "- set_decompiler_comment(addr, comment): Add pre-comment (shown in decompiler)\n"
+                    + "- set_disassembly_comment(addr, comment): Add EOL comment (shown in listing)\n"
+                    + "- list_comments(type): List all comments, optionally filtered by type\n"
+                    + "- rename_function(old, new): Annotate by renaming functions\n"
+                    + "- rename_variable(func, old, new): Annotate by renaming variables\n"
+                    + "- rename_data(addr, name): Rename data labels\n\n"
+                    + "Comment types: eol, pre, post, plate, repeatable\n";
+
+            case "search":
+                return "=== Search ===\n\n"
+                    + "Available MCP tools:\n"
+                    + "- search_functions_by_name(query): Search function names\n"
+                    + "- search_memory(pattern): Search for byte patterns (supports ?? wildcards)\n"
+                    + "- list_strings(filter): Search string content\n\n"
+                    + "Memory search pattern examples:\n"
+                    + "- \"48 89 5C 24 08\" - Exact byte sequence\n"
+                    + "- \"FF 15 ?? ?? ?? ??\" - Call [rip+??] pattern with wildcards\n"
+                    + "- \"E8\" - Find all relative CALL instructions (x86)\n\n"
+                    + "Tips:\n"
+                    + "- Search for known patterns to find similar code\n"
+                    + "- Use wildcards for instruction patterns with varying operands\n";
+
+            default:
+                return "Unknown help topic: " + topic + "\n\n" + getGhidraHelpTopics();
+        }
+    }
+
+    /**
+     * List all available help topics
+     */
+    private String getGhidraHelpTopics() {
+        return "=== GhidraMCP Help ===\n\n"
+            + "Available help topics:\n"
+            + "- xrefs: Cross-references and call graph analysis\n"
+            + "- functions: Function analysis and manipulation\n"
+            + "- types: Data types, structures, and enums\n"
+            + "- patching: Binary patching and export\n"
+            + "- navigation: UI navigation and bookmarks\n"
+            + "- analysis: Auto-analysis and program info\n"
+            + "- comments: Comments and annotations\n"
+            + "- search: Memory and function search\n\n"
+            + "Usage: ghidra_help(topic='xrefs')\n\n"
+            + "Typical RE workflow:\n"
+            + "1. get_program_info() - Understand the binary\n"
+            + "2. list_imports/exports/strings - Survey the attack surface\n"
+            + "3. search_functions_by_name - Find interesting functions\n"
+            + "4. decompile_function - Read pseudocode\n"
+            + "5. get_callers/callees - Trace execution flow\n"
+            + "6. rename_function/set_function_prototype - Annotate findings\n"
+            + "7. set_bookmark - Mark important locations\n"
+            + "8. create_struct - Model data structures\n"
+            + "9. patch_bytes/patch_instruction - Modify behavior\n"
+            + "10. export_binary - Save patched binary\n";
     }
 
     // ----------------------------------------------------------------------------------
