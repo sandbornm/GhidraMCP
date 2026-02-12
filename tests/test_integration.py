@@ -11,14 +11,13 @@ Run with: python -m pytest tests/test_integration.py -v -m integration
 import json
 import os
 import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, call
-from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import bridge_mcp_ghidra
-
 
 # Mark all tests in this module as integration tests
 pytestmark = pytest.mark.integration

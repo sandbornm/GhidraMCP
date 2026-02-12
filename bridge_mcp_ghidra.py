@@ -12,6 +12,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urljoin
 
 import requests
@@ -33,7 +34,7 @@ ghidra_server_url = DEFAULT_GHIDRA_SERVER
 gdb_server_url = DEFAULT_GDB_SERVER
 
 # Global trajectory recorder
-trajectory_recorder: TrajectoryRecorder = None
+trajectory_recorder: TrajectoryRecorder | None = None
 
 def _record_call(tool_name: str, params: dict, result, duration_ms: float, success: bool = True):
     """Record a tool call to the trajectory if recording is active."""
@@ -361,7 +362,7 @@ def list_strings(offset: int = 0, limit: int = 2000, filter: str = None) -> list
     Returns:
         List of strings with their addresses
     """
-    params = {"offset": offset, "limit": limit}
+    params: dict[str, int | str] = {"offset": offset, "limit": limit}
     if filter:
         params["filter"] = filter
     return safe_get("strings", params)
@@ -473,7 +474,7 @@ def list_data_types(offset: int = 0, limit: int = 100, category: str = None) -> 
     Returns:
         List of data types with their kind, size, and category path
     """
-    params = {"offset": offset, "limit": limit}
+    params: dict[str, int | str] = {"offset": offset, "limit": limit}
     if category:
         params["category"] = category
     return safe_get("list_data_types", params)
@@ -641,7 +642,7 @@ def list_bookmarks(offset: int = 0, limit: int = 100, category: str = None) -> l
     Returns:
         List of bookmarks with addresses, categories, and comments
     """
-    params = {"offset": offset, "limit": limit}
+    params: dict[str, int | str] = {"offset": offset, "limit": limit}
     if category:
         params["category"] = category
     return safe_get("list_bookmarks", params)
@@ -749,7 +750,7 @@ def list_comments(offset: int = 0, limit: int = 100, type: str = None) -> list:
     Returns:
         List of comments with addresses, types, containing functions
     """
-    params = {"offset": offset, "limit": limit}
+    params: dict[str, int | str] = {"offset": offset, "limit": limit}
     if type:
         params["type"] = type
     return safe_get("list_comments", params)
@@ -1048,14 +1049,14 @@ def list_exporters() -> str:
 # DYNAMIC ANALYSIS TOOLS (Docker/GDB)
 # =============================================================================
 
-def gdb_request(endpoint: str, method: str = "GET", data: dict = None) -> dict:
+def gdb_request(endpoint: str, method: str = "GET", data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Make a request to the GDB Docker container API."""
     url = urljoin(gdb_server_url, endpoint)
     try:
         response = requests.get(url, timeout=30) if method == "GET" else requests.post(url, json=data, timeout=60)
         response.encoding = 'utf-8'
         if response.ok:
-            return response.json()
+            return cast(dict[str, Any], response.json())
         else:
             return {"error": f"HTTP {response.status_code}: {response.text}"}
     except requests.exceptions.ConnectionError:
@@ -1131,7 +1132,7 @@ def gdb_upload_binary(local_path: str, remote_name: str = None) -> dict:
             files = {"file": (path.name, f)}
             data = {"filename": remote_name or path.name}
             response = requests.post(url, files=files, data=data, timeout=30)
-        result = response.json()
+        result = cast(dict[str, Any], response.json())
         # Record manually since we can't use decorator with file upload
         if trajectory_recorder:
             duration_ms = (time.time() - start) * 1000
@@ -1677,7 +1678,7 @@ def gdb_set_watchpoint(binary: str, expression: str, watch_type: str = "write", 
         gdb_set_watchpoint("crackme", "password_buffer", watch_type="write",
                            breakpoints=["main"])
     """
-    data = {
+    data: dict[str, Any] = {
         "binary": binary,
         "expression": expression,
         "watch_type": watch_type
@@ -2061,7 +2062,7 @@ def trajectory_start(binary_name: str = None, output_dir: str = None) -> dict:
                 binary_name = response.text.strip()
             else:
                 binary_name = "unknown_binary"
-        except:
+        except Exception:
             binary_name = "unknown_binary"
 
     output = output_dir or DEFAULT_TRAJECTORY_DIR

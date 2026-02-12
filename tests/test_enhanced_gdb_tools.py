@@ -5,11 +5,11 @@ Tests the new register, memory, stepping, watchpoint, heap, Frida,
 ROP gadget, GOT/PLT, and vmmap tools added to bridge_mcp_ghidra.py.
 """
 
-import json
 import os
 import sys
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -161,7 +161,7 @@ class TestWatchpointTools:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_set_read_watchpoint(self, mock_gdb):
         mock_gdb.return_value = {"output": "Access watchpoint set"}
-        result = bridge_mcp_ghidra.gdb_set_watchpoint(
+        bridge_mcp_ghidra.gdb_set_watchpoint(
             binary="test",
             expression="*0x404000",
             watch_type="read",

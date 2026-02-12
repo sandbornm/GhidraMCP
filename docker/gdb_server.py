@@ -4,15 +4,16 @@ HTTP API server for GDB dynamic analysis.
 Runs inside the Docker container and accepts commands from the MCP bridge.
 """
 
-import subprocess
-import os
-import signal
-import tempfile
+import contextlib
 import json
 import logging
+import os
+import subprocess
+import tempfile
 from datetime import datetime
-from flask import Flask, request, jsonify
 from pathlib import Path
+
+from flask import Flask, jsonify, request
 
 # Set up logging
 LOG_DIR = Path("/analysis/logs")
@@ -61,7 +62,7 @@ def health():
     for arch in ["aarch64", "arm", "mips", "mipsel", "mips64", "mips64el", "ppc", "ppc64", "riscv64", "i386"]:
         if Path(f"/usr/bin/qemu-{arch}").exists() or Path(f"/usr/bin/qemu-{arch}-static").exists():
             qemu_arches.append(arch)
-    
+
     return jsonify({
         "status": "ok",
         "platform": "linux/amd64",
@@ -75,20 +76,20 @@ def check_arch():
     """Check the architecture of a binary and what emulator would be used."""
     data = request.json or {}
     binary = data.get("binary")
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     arch, qemu_cmd = detect_arch(binary_path)
-    
+
     # Get detailed file info
     result = subprocess.run(["file", str(binary_path)], capture_output=True, text=True)
-    
+
     return jsonify({
         "binary": str(binary_path),
         "architecture": arch,
@@ -103,53 +104,53 @@ def file_info():
     """Get comprehensive file information about a binary."""
     import time
     start = time.time()
-    
+
     data = request.json or {}
     binary = data.get("binary")
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     result = {}
-    
+
     # Basic file info
     file_result = subprocess.run(["file", "-b", str(binary_path)], capture_output=True, text=True)
     result["type"] = file_result.stdout.strip()
-    
+
     # File size
     stat = binary_path.stat()
     result["size_bytes"] = stat.st_size
     result["size_human"] = f"{stat.st_size / 1024:.1f} KB" if stat.st_size < 1024*1024 else f"{stat.st_size / (1024*1024):.1f} MB"
-    
+
     # MD5/SHA256 hash
     import hashlib
     with open(binary_path, "rb") as f:
         data_bytes = f.read()
-        result["md5"] = hashlib.md5(data_bytes).hexdigest()
+        result["md5"] = hashlib.md5(data_bytes).hexdigest()  # noqa: S324
         result["sha256"] = hashlib.sha256(data_bytes).hexdigest()
-    
+
     # Architecture detection
     arch, qemu = detect_arch(binary_path)
     result["architecture"] = arch
     result["emulator"] = qemu
     result["native_execution"] = qemu is None
-    
+
     # Check if it's an ELF
     if data_bytes[:4] == b'\x7fELF':
         result["format"] = "ELF"
         result["is_elf"] = True
-        
+
         # ELF class (32/64 bit)
         result["bits"] = 32 if data_bytes[4] == 1 else 64
-        
+
         # Endianness
         result["endian"] = "little" if data_bytes[5] == 1 else "big"
-        
+
         # ELF type
         elf_types = {0: "NONE", 1: "REL", 2: "EXEC", 3: "DYN", 4: "CORE"}
         elf_type = int.from_bytes(data_bytes[16:18], "little" if data_bytes[5] == 1 else "big")
@@ -161,10 +162,10 @@ def file_info():
     else:
         result["format"] = "unknown"
         result["is_elf"] = False
-    
+
     duration = (time.time() - start) * 1000
     log_tool_call("file_info", {"binary": binary}, result, duration)
-    
+
     return jsonify(result)
 
 
@@ -173,21 +174,21 @@ def readelf_info():
     """Get ELF header and program header information."""
     import time
     start = time.time()
-    
+
     data = request.json or {}
     binary = data.get("binary")
     section = data.get("section", "all")  # all, headers, sections, symbols, dynamic, relocs
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     result = {"binary": str(binary_path)}
-    
+
     flags_map = {
         "all": "-a",
         "headers": "-h",
@@ -198,16 +199,16 @@ def readelf_info():
         "program": "-l",
         "notes": "-n",
     }
-    
+
     flag = flags_map.get(section, "-a")
     cmd_result = subprocess.run(["readelf", flag, str(binary_path)], capture_output=True, text=True)
     result["output"] = cmd_result.stdout
     if cmd_result.stderr:
         result["errors"] = cmd_result.stderr
-    
+
     duration = (time.time() - start) * 1000
     log_tool_call("readelf", {"binary": binary, "section": section}, {"success": True}, duration)
-    
+
     return jsonify(result)
 
 
@@ -216,28 +217,28 @@ def get_sections():
     """Get parsed section information from an ELF binary."""
     import time
     start = time.time()
-    
+
     data = request.json or {}
     binary = data.get("binary")
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     # Parse readelf output
     cmd_result = subprocess.run(["readelf", "-S", "-W", str(binary_path)], capture_output=True, text=True)
-    
+
     sections = []
     for line in cmd_result.stdout.split("\n"):
         # Parse section lines like: [ 1] .interp PROGBITS 0000000000400238 00000238 0000001c 00 A 0 0 1
         if line.strip().startswith("["):
             parts = line.split()
             if len(parts) >= 7:
-                try:
+                with contextlib.suppress(BaseException):
                     sections.append({
                         "index": parts[0].strip("[]"),
                         "name": parts[1],
@@ -246,14 +247,12 @@ def get_sections():
                         "offset": parts[4] if len(parts) > 4 else "",
                         "size": parts[5] if len(parts) > 5 else "",
                     })
-                except:
-                    pass
-    
+
     result = {"binary": str(binary_path), "sections": sections, "count": len(sections)}
-    
+
     duration = (time.time() - start) * 1000
     log_tool_call("sections", {"binary": binary}, {"count": len(sections)}, duration)
-    
+
     return jsonify(result)
 
 
@@ -262,22 +261,22 @@ def get_symbols():
     """Get symbol table from a binary."""
     import time
     start = time.time()
-    
+
     data = request.json or {}
     binary = data.get("binary")
     filter_type = data.get("filter")  # Optional: FUNC, OBJECT, etc.
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     # Use nm for symbol extraction
     cmd_result = subprocess.run(["nm", "-C", str(binary_path)], capture_output=True, text=True)
-    
+
     symbols = []
     for line in cmd_result.stdout.split("\n"):
         parts = line.split()
@@ -290,36 +289,36 @@ def get_symbols():
             sym_type, name = parts[0], parts[1]
             if not filter_type or sym_type.upper() == filter_type.upper():
                 symbols.append({"address": None, "type": sym_type, "name": name})
-    
+
     result = {"binary": str(binary_path), "symbols": symbols[:500], "total": len(symbols)}  # Limit to 500
     if len(symbols) > 500:
         result["truncated"] = True
-    
+
     duration = (time.time() - start) * 1000
     log_tool_call("symbols", {"binary": binary, "filter": filter_type}, {"count": len(symbols)}, duration)
-    
+
     return jsonify(result)
 
 
 @app.route("/entropy", methods=["POST"])
 def analyze_entropy():
     """Analyze entropy of a binary to detect packing/encryption."""
-    import time
     import math
+    import time
     start = time.time()
-    
+
     data = request.json or {}
     binary = data.get("binary")
     block_size = data.get("block_size", 256)
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     def calculate_entropy(data):
         if not data:
             return 0
@@ -331,26 +330,26 @@ def analyze_entropy():
             p = count / len(data)
             entropy -= p * math.log2(p)
         return entropy
-    
+
     with open(binary_path, "rb") as f:
         data_bytes = f.read()
-    
+
     # Overall entropy
     overall_entropy = calculate_entropy(data_bytes)
-    
+
     # Block-by-block entropy
     blocks = []
     for i in range(0, len(data_bytes), block_size):
         block = data_bytes[i:i+block_size]
         blocks.append(calculate_entropy(block))
-    
+
     # Detect likely packing
     avg_entropy = sum(blocks) / len(blocks) if blocks else 0
     high_entropy_blocks = sum(1 for e in blocks if e > 7.0)
     high_entropy_ratio = high_entropy_blocks / len(blocks) if blocks else 0
-    
+
     likely_packed = overall_entropy > 7.0 or high_entropy_ratio > 0.5
-    
+
     result = {
         "binary": str(binary_path),
         "overall_entropy": round(overall_entropy, 4),
@@ -362,10 +361,10 @@ def analyze_entropy():
         "likely_packed": likely_packed,
         "analysis": "HIGH - likely packed/encrypted" if likely_packed else "NORMAL - likely not packed"
     }
-    
+
     duration = (time.time() - start) * 1000
     log_tool_call("entropy", {"binary": binary}, result, duration)
-    
+
     return jsonify(result)
 
 
@@ -374,51 +373,49 @@ def binwalk_analyze():
     """Run binwalk to detect embedded files and signatures."""
     import time
     start = time.time()
-    
+
     data = request.json or {}
     binary = data.get("binary")
     extract = data.get("extract", False)
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     # Run binwalk signature scan
     cmd = ["binwalk", str(binary_path)]
     if extract:
         cmd.insert(1, "-e")
-    
+
     cmd_result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    
+
     # Parse binwalk output
     signatures = []
     for line in cmd_result.stdout.split("\n"):
         if line.strip() and not line.startswith("DECIMAL") and not line.startswith("-"):
             parts = line.split(None, 2)
             if len(parts) >= 3:
-                try:
+                with contextlib.suppress(BaseException):
                     signatures.append({
                         "offset_dec": int(parts[0]),
                         "offset_hex": parts[1],
                         "description": parts[2]
                     })
-                except:
-                    pass
-    
+
     result = {
         "binary": str(binary_path),
         "signatures": signatures,
         "count": len(signatures),
         "raw_output": cmd_result.stdout
     }
-    
+
     duration = (time.time() - start) * 1000
     log_tool_call("binwalk", {"binary": binary, "extract": extract}, {"count": len(signatures)}, duration)
-    
+
     return jsonify(result)
 
 
@@ -427,27 +424,27 @@ def hexdump():
     """Get hex dump of a binary at a specific offset."""
     import time
     start = time.time()
-    
+
     data = request.json or {}
     binary = data.get("binary")
     offset = data.get("offset", 0)
     length = data.get("length", 256)
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     # Limit length
     length = min(length, 4096)
-    
+
     with open(binary_path, "rb") as f:
         f.seek(offset)
         data_bytes = f.read(length)
-    
+
     # Format hex dump
     lines = []
     for i in range(0, len(data_bytes), 16):
@@ -455,7 +452,7 @@ def hexdump():
         hex_part = " ".join(f"{b:02x}" for b in chunk)
         ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
         lines.append(f"{offset+i:08x}  {hex_part:<48}  |{ascii_part}|")
-    
+
     result = {
         "binary": str(binary_path),
         "offset": offset,
@@ -463,10 +460,10 @@ def hexdump():
         "hex_dump": "\n".join(lines),
         "raw_hex": data_bytes.hex(),
     }
-    
+
     duration = (time.time() - start) * 1000
     log_tool_call("hexdump", {"binary": binary, "offset": offset, "length": length}, {"bytes_read": len(data_bytes)}, duration)
-    
+
     return jsonify(result)
 
 
@@ -475,24 +472,24 @@ def get_imports():
     """Get imported functions from a binary."""
     import time
     start = time.time()
-    
+
     data = request.json or {}
     binary = data.get("binary")
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     # Use objdump to get dynamic relocations
     cmd_result = subprocess.run(
-        ["objdump", "-T", str(binary_path)], 
+        ["objdump", "-T", str(binary_path)],
         capture_output=True, text=True
     )
-    
+
     imports = []
     for line in cmd_result.stdout.split("\n"):
         if "*UND*" in line:  # Undefined = imported
@@ -500,16 +497,16 @@ def get_imports():
             if parts:
                 name = parts[-1]
                 imports.append({"name": name, "type": "function"})
-    
+
     result = {
         "binary": str(binary_path),
         "imports": imports,
         "count": len(imports)
     }
-    
+
     duration = (time.time() - start) * 1000
     log_tool_call("imports", {"binary": binary}, {"count": len(imports)}, duration)
-    
+
     return jsonify(result)
 
 
@@ -518,41 +515,40 @@ def get_libraries():
     """Get shared libraries required by a binary."""
     import time
     start = time.time()
-    
+
     data = request.json or {}
     binary = data.get("binary")
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     # Use ldd or readelf to get libraries
     cmd_result = subprocess.run(
-        ["readelf", "-d", str(binary_path)], 
+        ["readelf", "-d", str(binary_path)],
         capture_output=True, text=True
     )
-    
+
     libraries = []
     for line in cmd_result.stdout.split("\n"):
-        if "NEEDED" in line:
-            # Extract library name from: 0x0000000000000001 (NEEDED) Shared library: [libc.so.6]
-            if "[" in line and "]" in line:
-                lib = line[line.index("[")+1:line.index("]")]
-                libraries.append(lib)
-    
+        # Extract library name from: 0x0000000000000001 (NEEDED) Shared library: [libc.so.6]
+        if "NEEDED" in line and "[" in line and "]" in line:
+            lib = line[line.index("[") + 1:line.index("]")]
+            libraries.append(lib)
+
     result = {
         "binary": str(binary_path),
         "libraries": libraries,
         "count": len(libraries)
     }
-    
+
     duration = (time.time() - start) * 1000
     log_tool_call("libs", {"binary": binary}, {"count": len(libraries)}, duration)
-    
+
     return jsonify(result)
 
 
@@ -561,20 +557,20 @@ def upload_binary():
     """Upload a binary for analysis."""
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
-    
+
     file = request.files["file"]
     filename = request.form.get("filename", file.filename)
-    
+
     # Save to bins directory
     filepath = BINS_DIR / filename
     file.save(filepath)
-    
+
     # Make executable
-    os.chmod(filepath, 0o755)
-    
+    os.chmod(filepath, 0o755)  # noqa: S103
+
     # Get file info
     result = subprocess.run(["file", str(filepath)], capture_output=True, text=True)
-    
+
     return jsonify({
         "status": "uploaded",
         "path": str(filepath),
@@ -601,7 +597,7 @@ def detect_arch(binary_path: Path) -> tuple[str, str]:
     """Detect binary architecture and return (arch_name, qemu_command or None)."""
     result = subprocess.run(["file", str(binary_path)], capture_output=True, text=True)
     file_info = result.stdout.lower()
-    
+
     # Map file output to QEMU emulator
     arch_map = {
         "arm aarch64": ("aarch64", "qemu-aarch64-static"),
@@ -616,11 +612,11 @@ def detect_arch(binary_path: Path) -> tuple[str, str]:
         "intel 80386": ("i386", None),  # Native via compat
         "i386": ("i386", None),
     }
-    
+
     for pattern, (arch, qemu) in arch_map.items():
         if pattern in file_info:
             return arch, qemu
-    
+
     return "unknown", None
 
 
@@ -633,28 +629,28 @@ def run_binary():
     stdin_input = data.get("stdin", "")
     timeout = data.get("timeout", 10)
     arch_override = data.get("arch")  # Optional: force specific architecture
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     # Detect or use override architecture
     if arch_override:
         arch = arch_override
         qemu_cmd = f"qemu-{arch}-static" if arch not in ["x86_64", "i386"] else None
     else:
         arch, qemu_cmd = detect_arch(binary_path)
-    
+
     # Build command
     if qemu_cmd and Path(f"/usr/bin/{qemu_cmd}").exists():
         cmd = [f"/usr/bin/{qemu_cmd}", str(binary_path)] + args
     else:
         cmd = [str(binary_path)] + args
-    
+
     try:
         result = subprocess.run(
             cmd,
@@ -685,15 +681,15 @@ def gdb_command():
     data = request.json or {}
     binary = data.get("binary")
     commands = data.get("commands", [])
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     # Build GDB command file
     gdb_script = "\n".join([
         "set pagination off",
@@ -701,11 +697,11 @@ def gdb_command():
         *commands,
         "quit"
     ])
-    
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".gdb", delete=False) as f:
         f.write(gdb_script)
         script_path = f.name
-    
+
     try:
         result = subprocess.run(
             ["gdb", "-batch", "-x", script_path, str(binary_path)],
@@ -734,21 +730,21 @@ def gdb_breakpoint_run():
     binary = data.get("binary")
     breakpoints = data.get("breakpoints", [])  # List of addresses or symbols
     stdin_input = data.get("stdin", "")
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     # Build GDB commands
     commands = [
         "set pagination off",
         "set confirm off",
     ]
-    
+
     for bp in breakpoints:
         commands.append(f"break *{bp}" if bp.startswith("0x") else f"break {bp}")
-    
+
     commands.extend([
         "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
         "info registers",
@@ -757,13 +753,13 @@ def gdb_breakpoint_run():
         "continue",
         "quit"
     ])
-    
+
     gdb_script = "\n".join(commands)
-    
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".gdb", delete=False) as f:
         f.write(gdb_script)
         script_path = f.name
-    
+
     try:
         result = subprocess.run(
             ["gdb", "-batch", "-x", script_path, str(binary_path)],
@@ -789,15 +785,15 @@ def strace_binary():
     args = data.get("args", [])
     stdin_input = data.get("stdin", "")
     timeout = data.get("timeout", 10)
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     try:
         result = subprocess.run(
             ["strace", "-f", str(binary_path)] + args,
@@ -825,15 +821,15 @@ def ltrace_binary():
     args = data.get("args", [])
     stdin_input = data.get("stdin", "")
     timeout = data.get("timeout", 10)
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     try:
         result = subprocess.run(
             ["ltrace", "-f", str(binary_path)] + args,
@@ -861,26 +857,26 @@ def disassemble():
     symbol = data.get("symbol")  # Function name
     start_addr = data.get("start")  # Or start address
     end_addr = data.get("end")  # And end address
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     cmd = ["objdump", "-d", "-M", "intel"]
-    
+
     if start_addr and end_addr:
         cmd.extend([f"--start-address={start_addr}", f"--end-address={end_addr}"])
-    
+
     cmd.append(str(binary_path))
-    
+
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         output = result.stdout
-        
+
         # If symbol specified, filter to just that function
         if symbol:
             lines = output.split("\n")
@@ -894,7 +890,7 @@ def disassemble():
                 if in_function:
                     filtered.append(line)
             output = "\n".join(filtered)
-        
+
         return jsonify({"disassembly": output})
     except Exception as e:
         return jsonify({"error": str(e)})
@@ -906,15 +902,15 @@ def get_strings():
     data = request.json or {}
     binary = data.get("binary")
     min_len = data.get("min_length", 4)
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     try:
         result = subprocess.run(
             ["strings", f"-n{min_len}", str(binary_path)],
@@ -932,15 +928,15 @@ def checksec():
     """Check binary security features (NX, PIE, RELRO, etc.)."""
     data = request.json or {}
     binary = data.get("binary")
-    
+
     if not binary:
         return jsonify({"error": "No binary specified"}), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
-    
+
     # Use readelf to check security features
     try:
         # Check for NX (non-executable stack)
@@ -949,14 +945,14 @@ def checksec():
             capture_output=True, text=True
         )
         nx_enabled = "GNU_STACK" in result.stdout and "RWE" not in result.stdout
-        
+
         # Check for PIE
         result_type = subprocess.run(
             ["file", str(binary_path)],
             capture_output=True, text=True
         )
         pie_enabled = "pie executable" in result_type.stdout.lower() or "shared object" in result_type.stdout.lower()
-        
+
         # Check for RELRO
         relro = "None"
         if "GNU_RELRO" in result.stdout:
@@ -965,18 +961,15 @@ def checksec():
                 ["readelf", "-d", str(binary_path)],
                 capture_output=True, text=True
             )
-            if "BIND_NOW" in result_dyn.stdout:
-                relro = "Full"
-            else:
-                relro = "Partial"
-        
+            relro = "Full" if "BIND_NOW" in result_dyn.stdout else "Partial"
+
         # Check for canary (stack protector)
         result_syms = subprocess.run(
             ["readelf", "-s", str(binary_path)],
             capture_output=True, text=True
         )
         canary = "__stack_chk_fail" in result_syms.stdout
-        
+
         return jsonify({
             "binary": str(binary_path),
             "nx": nx_enabled,
@@ -994,10 +987,10 @@ def get_logs():
     """Get recent server logs."""
     lines = request.args.get("lines", 100, type=int)
     log_file = LOG_DIR / "gdb_server.log"
-    
+
     if not log_file.exists():
         return jsonify({"logs": [], "message": "No logs yet"})
-    
+
     try:
         with open(log_file) as f:
             all_lines = f.readlines()
@@ -1010,10 +1003,10 @@ def get_logs():
 def get_telemetry():
     """Get tool call telemetry."""
     lines = request.args.get("lines", 100, type=int)
-    
+
     if not TELEMETRY_FILE.exists():
         return jsonify({"calls": [], "message": "No telemetry yet"})
-    
+
     try:
         with open(TELEMETRY_FILE) as f:
             all_lines = f.readlines()
@@ -1031,41 +1024,41 @@ def patch_elf():
     """
     import time
     start = time.time()
-    
+
     data = request.json or {}
     binary = data.get("binary")
     address = data.get("address")  # Virtual address (hex string like "0x401000")
     hex_bytes = data.get("bytes")  # Hex string like "90 90 90"
     output_name = data.get("output")  # Optional: output filename
-    
+
     logger.info(f"patch_elf called: binary={binary}, address={address}, bytes={hex_bytes}")
-    
+
     if not all([binary, address, hex_bytes]):
         result = {"error": "Required: binary, address, bytes"}
         log_tool_call("patch_elf", data, result)
         return jsonify(result), 400
-    
+
     binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
-    
+
     if not binary_path.exists():
         result = {"error": f"Binary not found: {binary_path}"}
         log_tool_call("patch_elf", data, result)
         return jsonify(result), 404
-    
+
     try:
         # Parse the virtual address
         vaddr = int(address, 16) if isinstance(address, str) else address
-        
+
         # Parse hex bytes
         hex_bytes = hex_bytes.replace(" ", "")
         patch_bytes = bytes.fromhex(hex_bytes)
-        
+
         # Use readelf to find the file offset for this virtual address
         result = subprocess.run(
             ["readelf", "-l", str(binary_path)],
             capture_output=True, text=True
         )
-        
+
         # Parse program headers to find the segment containing our address
         file_offset = None
         for line in result.stdout.split("\n"):
@@ -1077,42 +1070,42 @@ def patch_elf():
                         seg_offset = int(parts[1], 16)
                         seg_vaddr = int(parts[2], 16)
                         seg_filesz = int(parts[4], 16)
-                        
+
                         # Check if our address falls within this segment
                         if seg_vaddr <= vaddr < seg_vaddr + seg_filesz:
                             file_offset = seg_offset + (vaddr - seg_vaddr)
                             break
                     except (ValueError, IndexError):
                         continue
-        
+
         if file_offset is None:
             result = {"error": f"Could not find file offset for virtual address {address}"}
             log_tool_call("patch_elf", data, result)
             return jsonify(result), 400
-        
+
         # Create output file (copy of original)
         if output_name:
             output_path = BINS_DIR / output_name
         else:
             output_path = BINS_DIR / f"{binary_path.stem}_patched{binary_path.suffix}"
-        
+
         # Copy original file
         import shutil
         shutil.copy2(binary_path, output_path)
-        
+
         # Read original bytes for logging
         with open(output_path, "rb") as f:
             f.seek(file_offset)
             original_bytes = f.read(len(patch_bytes))
-        
+
         # Apply patch
         with open(output_path, "r+b") as f:
             f.seek(file_offset)
             f.write(patch_bytes)
-        
+
         # Make executable
-        os.chmod(output_path, 0o755)
-        
+        os.chmod(output_path, 0o755)  # noqa: S103
+
         duration = (time.time() - start) * 1000
         result = {
             "status": "patched",
@@ -1123,11 +1116,11 @@ def patch_elf():
             "new_bytes": patch_bytes.hex(),
             "size": len(patch_bytes)
         }
-        
+
         logger.info(f"Successfully patched {output_path} at offset {hex(file_offset)}")
         log_tool_call("patch_elf", data, result, duration)
         return jsonify(result)
-        
+
     except Exception as e:
         logger.error(f"Error patching ELF: {e}")
         result = {"error": str(e)}
@@ -1997,13 +1990,11 @@ def got_plt():
                     parts = line.split()
                     for i, p in enumerate(parts):
                         if p == sec_name and i + 2 < len(parts):
-                            try:
+                            with contextlib.suppress(IndexError):
                                 section_info[sec_name] = {
                                     "address": f"0x{parts[i+2]}",
                                     "size": f"0x{parts[i+4]}" if i + 4 < len(parts) else "unknown"
                                 }
-                            except IndexError:
-                                pass
 
         duration = (time.time() - start) * 1000
         result_data = {
@@ -2381,10 +2372,7 @@ def frida_hook():
     on_leave_body = on_leave if on_leave else 'console.log("[*] ' + target + ' returned: " + retval);'
 
     # Determine if target is an address or symbol name
-    if target.startswith("0x"):
-        resolve_expr = f"ptr('{target}')"
-    else:
-        resolve_expr = f"Module.findExportByName(null, '{target}')"
+    resolve_expr = f"ptr('{target}')" if target.startswith("0x") else f"Module.findExportByName(null, '{target}')"
 
     frida_script = f"""
 var targetAddr = {resolve_expr};
@@ -2713,9 +2701,7 @@ def gdb_search_pattern():
 
             for line in find_section.strip().split("\n"):
                 line = line.strip()
-                if line.startswith("0x"):
-                    found_locations.append(line)
-                elif "pattern found" in line.lower():
+                if line.startswith("0x") or "pattern found" in line.lower():
                     found_locations.append(line)
 
         duration = (time.time() - start) * 1000
@@ -2758,4 +2744,4 @@ if __name__ == "__main__":
     logger.info(f"Logs directory: {LOG_DIR}")
     logger.info("Upload binaries to /analysis/bins or via POST /upload")
 
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=False)  # noqa: S104

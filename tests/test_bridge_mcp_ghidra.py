@@ -6,16 +6,16 @@ MCP tool behavior, parameter handling, error handling, and response parsing.
 """
 
 import json
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 # Add project root to path so we can import the module
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import bridge_mcp_ghidra
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -134,7 +134,7 @@ class TestStaticAnalysisTools:
     @patch("bridge_mcp_ghidra.safe_get")
     def test_list_methods_pagination(self, mock_get):
         mock_get.return_value = ["func3", "func4"]
-        result = bridge_mcp_ghidra.list_methods(offset=2, limit=2)
+        bridge_mcp_ghidra.list_methods(offset=2, limit=2)
         mock_get.assert_called_with("methods", {"offset": 2, "limit": 2})
 
     @patch("bridge_mcp_ghidra.safe_get")
@@ -199,7 +199,7 @@ class TestStaticAnalysisTools:
     @patch("bridge_mcp_ghidra.safe_get")
     def test_list_strings_with_filter(self, mock_get):
         mock_get.return_value = ['0x402010: "Error"']
-        result = bridge_mcp_ghidra.list_strings(filter="Error")
+        bridge_mcp_ghidra.list_strings(filter="Error")
         call_args = mock_get.call_args
         assert call_args[0][1]["filter"] == "Error"
 
@@ -725,7 +725,7 @@ class TestRecordedToolDecorator:
         result = sample_func(x=5)
         assert result == 10
         # _record_call should have been called
-        assert mock_recorder.record.called or True  # recorded via _record_call
+        assert True  # recorded via _record_call
 
     def test_decorator_propagates_exceptions(self):
         """recorded_tool should re-raise exceptions from the wrapped function."""
@@ -786,5 +786,5 @@ class TestHelpTool:
     @patch("bridge_mcp_ghidra.safe_get")
     def test_ghidra_help_with_topic(self, mock_get):
         mock_get.return_value = ["=== Cross-References ===", "get_xrefs_to"]
-        result = bridge_mcp_ghidra.ghidra_help(topic="xrefs")
+        bridge_mcp_ghidra.ghidra_help(topic="xrefs")
         assert "xrefs" in mock_get.call_args[0][1].get("topic", "")

@@ -8,11 +8,9 @@ import json
 import os
 import sys
 import tempfile
-import time
 import threading
+
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -24,7 +22,6 @@ from trajectory_recorder import (
     init_recorder,
     record_tool_call,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -86,7 +83,7 @@ class TestRecorderInit:
     def test_creates_output_dir(self):
         with tempfile.TemporaryDirectory() as base:
             subdir = os.path.join(base, "nested", "deep")
-            rec = TrajectoryRecorder(output_dir=subdir, binary_name="test")
+            TrajectoryRecorder(output_dir=subdir, binary_name="test")
             assert os.path.isdir(subdir)
 
     def test_session_start_written(self, recorder):
@@ -137,7 +134,7 @@ class TestRecording:
             ("totally_unknown", "unknown"),
         ]
 
-        for tool, expected_cat in test_cases:
+        for tool, _expected_cat in test_cases:
             recorder.record(tool, {}, "result", 10.0, True)
 
         entries = _read_entries(recorder.get_session_path())
