@@ -1,0 +1,78 @@
+[project]
+name = "ghidra-mcp"
+version = "1.5.0"
+description = "MCP server for LLM-driven reverse engineering with Ghidra and GDB"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+dependencies = [
+    "mcp>=1.5.0,<2",
+    "requests>=2.32,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-timeout>=2.0",
+    "pytest-mock>=3.0",
+    "ruff>=0.4.0",
+    "mypy>=1.0",
+    "types-requests>=2.31",
+    "pre-commit>=3.0",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+src = ["."]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "B",     # flake8-bugbear
+    "UP",    # pyupgrade
+    "S",     # flake8-bandit (security)
+    "T20",   # flake8-print
+    "SIM",   # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "S603",   # subprocess calls (expected in this project)
+    "S607",   # partial executable path (expected for system tools)
+    "S108",   # /tmp usage (fine for temp files)
+    "T201",   # print statements (used in CLI)
+    "B904",   # raise from (not always applicable)
+    "S110",   # try-except-pass (some cases are intentional)
+    "S101",   # assert usage (fine in tests)
+    "S602",   # subprocess shell (some cases needed)
+    "S605",   # start process with shell
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S106", "S311"]
+"docker/*" = ["S603", "S607"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+check_untyped_defs = true
+exclude = [
+    "docker/",
+    "trajectories/",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --tb=short --timeout=30"
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]

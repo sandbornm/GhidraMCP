@@ -1537,6 +1537,500 @@ def gdb_get_telemetry(lines: int = 100) -> dict:
 
 
 # =============================================================================
+# ENHANCED DYNAMIC ANALYSIS TOOLS (Registers, Memory, Frida, etc.)
+# =============================================================================
+
+@mcp.tool()
+@recorded_tool
+def gdb_read_registers(binary: str, breakpoint: str = "main") -> dict:
+    """
+    Read all CPU registers at a breakpoint location during execution.
+    Sets a breakpoint, runs the binary, and dumps the full register state
+    including general-purpose, flags, segment, and floating-point registers.
+
+    Args:
+        binary: Name of the binary to debug (must be uploaded first)
+        breakpoint: Location to break at before reading registers.
+                    Can be a symbol name (e.g. "main", "encrypt") or
+                    an address (e.g. "0x401000"). Default: "main"
+
+    Returns:
+        Dict with register names and their current values at the breakpoint,
+        including general-purpose registers (rax, rbx, etc.), instruction
+        pointer (rip), stack pointer (rsp), flags register (eflags), and
+        any architecture-specific registers.
+
+    Example:
+        gdb_read_registers("crackme")
+        gdb_read_registers("crackme", breakpoint="0x401234")
+        gdb_read_registers("crackme", breakpoint="check_password")
+    """
+    return gdb_request("/gdb/registers", "POST", {
+        "binary": binary,
+        "breakpoint": breakpoint
+    })
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_read_memory(binary: str, address: str, length: int = 64, format: str = "hex") -> dict:
+    """
+    Read memory at a specific address during binary execution.
+    Runs the binary under GDB and reads memory contents at the target address.
+    Supports multiple output formats for different analysis needs.
+
+    Args:
+        binary: Name of the binary to debug (must be uploaded first)
+        address: Memory address to read from (e.g. "0x7fffffffe000", "$rsp",
+                 "$rsp-0x20"). Supports GDB expressions and register references.
+        length: Number of bytes to read (default: 64, max varies by server config)
+        format: Output format for the memory dump:
+                - "hex": Raw hex bytes with ASCII side panel (default)
+                - "string": Interpret memory as a null-terminated string
+                - "instructions": Disassemble memory as machine code instructions
+
+    Returns:
+        Dict with the memory contents in the requested format, the resolved
+        address, and the number of bytes read.
+
+    Example:
+        gdb_read_memory("crackme", "0x404000", length=128)
+        gdb_read_memory("crackme", "$rsp", length=256, format="hex")
+        gdb_read_memory("crackme", "0x401000", length=64, format="instructions")
+        gdb_read_memory("crackme", "$rdi", format="string")
+    """
+    return gdb_request("/gdb/memory", "POST", {
+        "binary": binary,
+        "address": address,
+        "length": length,
+        "format": format
+    })
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_step_execution(binary: str, breakpoint: str = "main", command: str = "stepi", count: int = 1) -> dict:
+    """
+    Single-step through code execution and capture the register and instruction
+    state after each step. Useful for tracing exact execution flow, understanding
+    how data transforms through registers, and debugging at the instruction level.
+
+    Args:
+        binary: Name of the binary to debug (must be uploaded first)
+        breakpoint: Location to break at before stepping. Can be a symbol name
+                    or address (e.g. "main", "0x401000"). Default: "main"
+        command: GDB step command to use:
+                 - "stepi": Step one machine instruction, entering function calls
+                 - "nexti": Step one machine instruction, stepping over calls
+                 - "step": Step one source line, entering function calls
+                 - "next": Step one source line, stepping over calls
+        count: Number of steps to execute (default: 1). Each step captures the
+               full register state and current instruction, so large counts
+               may produce substantial output.
+
+    Returns:
+        Dict with an array of step results, each containing:
+        - Register values after the step
+        - Current instruction at the program counter
+        - Step number in the sequence
+
+    Example:
+        gdb_step_execution("crackme", breakpoint="main", command="stepi", count=10)
+        gdb_step_execution("crackme", breakpoint="0x401050", command="nexti", count=5)
+        gdb_step_execution("crackme", breakpoint="check_password", command="step", count=3)
+    """
+    return gdb_request("/gdb/step", "POST", {
+        "binary": binary,
+        "breakpoint": breakpoint,
+        "command": command,
+        "count": count
+    })
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_set_watchpoint(binary: str, expression: str, watch_type: str = "write", breakpoints: list = None) -> dict:
+    """
+    Set a hardware or software watchpoint to break when a memory location is
+    accessed. Watchpoints are essential for tracking when and where specific
+    variables or memory regions are read or modified during execution.
+
+    Args:
+        binary: Name of the binary to debug (must be uploaded first)
+        expression: Memory expression to watch. Can be a variable name,
+                    a dereferenced pointer, or a raw address cast:
+                    - "my_variable"
+                    - "*0x404060"
+                    - "*(int*)0x7fffffffe100"
+        watch_type: Type of memory access to watch for:
+                    - "write": Break when the memory is written to (default)
+                    - "read": Break when the memory is read from (rwatch)
+                    - "access": Break on any read or write access (awatch)
+        breakpoints: Optional list of breakpoints to set before running.
+                     Useful for ensuring the program reaches a state where
+                     the watched memory is valid. Default: None (runs from start)
+
+    Returns:
+        Dict with watchpoint hit information including the old and new values,
+        the instruction that triggered the watchpoint, register state, and
+        backtrace at the point of access.
+
+    Example:
+        gdb_set_watchpoint("crackme", "*0x404060", watch_type="write")
+        gdb_set_watchpoint("crackme", "*(char*)0x7fffe100", watch_type="access")
+        gdb_set_watchpoint("crackme", "password_buffer", watch_type="write",
+                           breakpoints=["main"])
+    """
+    data = {
+        "binary": binary,
+        "expression": expression,
+        "watch_type": watch_type
+    }
+    if breakpoints is not None:
+        data["breakpoints"] = breakpoints
+    return gdb_request("/gdb/watchpoint", "POST", data)
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_inspect_stack(binary: str, breakpoint: str = "main", depth: int = 20) -> dict:
+    """
+    Perform a full stack frame inspection at a breakpoint location.
+    Captures the backtrace, stack memory dump, frame-local variables,
+    and function arguments for comprehensive stack analysis.
+
+    Args:
+        binary: Name of the binary to debug (must be uploaded first)
+        breakpoint: Location to break at before inspecting the stack.
+                    Can be a symbol name or address. Default: "main"
+        depth: Number of stack words/entries to dump from the stack pointer
+               downward (default: 20). Controls how much raw stack memory
+               is included in the output.
+
+    Returns:
+        Dict with:
+        - backtrace: Full call stack with frame numbers, addresses, and symbols
+        - stack_memory: Raw hex dump of stack contents from current RSP
+        - frame_info: Current frame details including saved registers
+        - local_variables: Variables in the current stack frame (if debug info available)
+
+    Example:
+        gdb_inspect_stack("crackme")
+        gdb_inspect_stack("crackme", breakpoint="vulnerable_function", depth=50)
+        gdb_inspect_stack("crackme", breakpoint="0x401234", depth=32)
+    """
+    return gdb_request("/gdb/stack", "POST", {
+        "binary": binary,
+        "breakpoint": breakpoint,
+        "depth": depth
+    })
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_analyze_heap(binary: str, breakpoint: str = None) -> dict:
+    """
+    Analyze the heap state of a running process using GEF (GDB Enhanced Features)
+    commands. Provides detailed information about heap chunks, bins (fast, tcache,
+    unsorted, small, large), and arena metadata. Essential for heap exploitation
+    analysis and understanding dynamic memory usage patterns.
+
+    Args:
+        binary: Name of the binary to debug (must be uploaded first)
+        breakpoint: Optional breakpoint to set before analyzing the heap.
+                    If None, the analysis runs after the program's initial
+                    allocations. Set to a specific location to inspect heap
+                    state at a particular point in execution.
+
+    Returns:
+        Dict with heap analysis results including:
+        - chunks: List of heap chunks with addresses, sizes, and flags
+        - bins: State of fastbins, tcache bins, unsorted bin, small/large bins
+        - arenas: Main arena and thread arena information
+        - top_chunk: Address and size of the wilderness/top chunk
+
+    Example:
+        gdb_analyze_heap("crackme")
+        gdb_analyze_heap("crackme", breakpoint="after_malloc")
+        gdb_analyze_heap("crackme", breakpoint="0x401300")
+    """
+    data = {"binary": binary}
+    if breakpoint is not None:
+        data["breakpoint"] = breakpoint
+    return gdb_request("/gdb/heap", "POST", data)
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_got_plt(binary: str) -> dict:
+    """
+    Inspect the Global Offset Table (GOT) and Procedure Linkage Table (PLT)
+    entries of a binary. Shows the resolved and unresolved addresses for
+    dynamically linked functions. Critical for understanding dynamic linking,
+    detecting GOT overwrites, and analyzing lazy binding behavior.
+
+    Args:
+        binary: Name of the binary to analyze (must be uploaded first)
+
+    Returns:
+        Dict with GOT and PLT entries including:
+        - got_entries: List of GOT slots with addresses and resolved targets
+        - plt_entries: List of PLT stubs with their corresponding GOT slots
+        - relocation_info: Relocation records for dynamic symbols
+
+    Example:
+        gdb_got_plt("crackme")
+    """
+    return gdb_request("/got_plt", "POST", {
+        "binary": binary
+    })
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_rop_gadgets(binary: str, max_depth: int = 5, filter: str = None) -> dict:
+    """
+    Find Return-Oriented Programming (ROP) gadgets in a binary for exploit
+    development. Searches for useful instruction sequences ending in RET,
+    CALL, JMP, or SYSCALL instructions that can be chained together.
+
+    Args:
+        binary: Name of the binary to analyze (must be uploaded first)
+        max_depth: Maximum number of instructions per gadget to search for
+                   (default: 5). Higher values find longer gadgets but take
+                   more time.
+        filter: Optional regex or keyword filter to narrow results.
+                Examples: "pop rdi", "syscall", "mov .*, .*; ret",
+                "xor eax". If None, returns all discovered gadgets.
+
+    Returns:
+        Dict with:
+        - gadgets: List of gadgets with addresses and instruction sequences
+        - total_count: Total number of gadgets found
+        - unique_count: Number of unique instruction sequences
+
+    Example:
+        gdb_rop_gadgets("crackme")
+        gdb_rop_gadgets("crackme", max_depth=8, filter="pop rdi")
+        gdb_rop_gadgets("crackme", filter="syscall")
+    """
+    data = {
+        "binary": binary,
+        "max_depth": max_depth
+    }
+    if filter is not None:
+        data["filter"] = filter
+    return gdb_request("/rop_gadgets", "POST", data)
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_frida_instrument(binary: str, script: str, timeout: int = 10) -> dict:
+    """
+    Run a Frida instrumentation script on a binary for dynamic analysis.
+    Frida allows injecting JavaScript into the target process for powerful
+    runtime introspection, hooking, and modification capabilities.
+
+    Args:
+        binary: Name of the binary to instrument (must be uploaded first)
+        script: Frida JavaScript instrumentation script to execute.
+                The script has access to the full Frida API including
+                Interceptor, Memory, Module, Process, and Thread objects.
+        timeout: Maximum execution time in seconds (default: 10).
+                 The process will be terminated after this timeout.
+
+    Returns:
+        Dict with:
+        - output: Console output from the Frida script (send() messages)
+        - program_output: stdout/stderr from the target binary
+        - errors: Any errors encountered during instrumentation
+
+    Example:
+        gdb_frida_instrument("crackme",
+            script='Interceptor.attach(Module.findExportByName(null, "strcmp"), {'
+                   '  onEnter: function(args) {'
+                   '    send("strcmp: " + args[0].readUtf8String() + " vs " + args[1].readUtf8String());'
+                   '  }'
+                   '});',
+            timeout=15)
+        gdb_frida_instrument("crackme",
+            script='var base = Module.findBaseAddress("crackme");'
+                   'send("Base address: " + base);'
+                   'Memory.scan(base, 0x1000, "48 89 5C 24", {'
+                   '  onMatch: function(addr, size) { send("Found at: " + addr); }'
+                   '});')
+    """
+    return gdb_request("/frida/attach", "POST", {
+        "binary": binary,
+        "script": script,
+        "timeout": timeout
+    })
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_frida_trace(binary: str, functions: list, timeout: int = 10) -> dict:
+    """
+    Trace function calls in a binary using Frida. Automatically hooks the
+    specified functions and logs every call with arguments and return values.
+    Simpler than writing a full Frida script when you just need call tracing.
+
+    Args:
+        binary: Name of the binary to trace (must be uploaded first)
+        functions: List of function names or addresses to trace.
+                   Supports exported symbols (e.g. "malloc", "strcmp"),
+                   module-qualified names (e.g. "libc.so!printf"),
+                   and raw addresses (e.g. "0x401234").
+        timeout: Maximum execution time in seconds (default: 10).
+                 Tracing stops when the process exits or timeout is reached.
+
+    Returns:
+        Dict with:
+        - traces: Ordered list of function call events with timestamps,
+                  function name, arguments, and return values
+        - call_counts: Summary of how many times each function was called
+        - program_output: stdout/stderr from the target binary
+
+    Example:
+        gdb_frida_trace("crackme", functions=["strcmp", "strlen", "malloc"])
+        gdb_frida_trace("crackme", functions=["0x401234", "encrypt", "decrypt"],
+                        timeout=30)
+        gdb_frida_trace("crackme", functions=["libc.so!write", "libc.so!read"])
+    """
+    return gdb_request("/frida/trace", "POST", {
+        "binary": binary,
+        "functions": functions,
+        "timeout": timeout
+    })
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_frida_hook(binary: str, target: str, on_enter: str = None, on_leave: str = None, timeout: int = 10) -> dict:
+    """
+    Hook and intercept a specific function call using Frida with custom
+    onEnter and onLeave JavaScript callbacks. Provides fine-grained control
+    over function interception, allowing argument inspection, modification,
+    and return value manipulation.
+
+    Args:
+        binary: Name of the binary to hook (must be uploaded first)
+        target: Function to hook. Can be an exported symbol name (e.g. "strcmp"),
+                a module-qualified name (e.g. "libc.so!malloc"), or an address
+                (e.g. "0x401234").
+        on_enter: JavaScript code for the onEnter callback. Has access to the
+                  'args' array (NativePointer[]) for reading/modifying arguments.
+                  Use send() to emit data back. If None, a default logger is used.
+        on_leave: JavaScript code for the onLeave callback. Has access to
+                  'retval' (NativePointer) for reading/modifying the return value.
+                  Use send() to emit data back. If None, a default logger is used.
+        timeout: Maximum execution time in seconds (default: 10).
+
+    Returns:
+        Dict with:
+        - messages: Data emitted by send() calls in the hook callbacks
+        - program_output: stdout/stderr from the target binary
+        - errors: Any errors from the hook execution
+
+    Example:
+        gdb_frida_hook("crackme", target="strcmp",
+            on_enter='send("arg0=" + args[0].readUtf8String() + " arg1=" + args[1].readUtf8String());',
+            on_leave='send("retval=" + retval.toInt32());')
+        gdb_frida_hook("crackme", target="0x401234",
+            on_enter='send("Called with: " + args[0] + ", " + args[1]);')
+        gdb_frida_hook("crackme", target="malloc",
+            on_enter='this.size = args[0].toInt32(); send("malloc(" + this.size + ")");',
+            on_leave='send("  => " + retval);')
+    """
+    data = {
+        "binary": binary,
+        "target": target,
+        "timeout": timeout
+    }
+    if on_enter is not None:
+        data["on_enter"] = on_enter
+    if on_leave is not None:
+        data["on_leave"] = on_leave
+    return gdb_request("/frida/hook", "POST", data)
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_vmmap(binary: str, breakpoint: str = "main") -> dict:
+    """
+    Get the virtual memory map of a running process. Shows all memory regions
+    including code, data, heap, stack, shared libraries, and mapped files
+    with their permissions and backing sources. Essential for understanding
+    memory layout, finding writable/executable regions, and ASLR analysis.
+
+    Args:
+        binary: Name of the binary to debug (must be uploaded first)
+        breakpoint: Location to break at before dumping the memory map.
+                    Can be a symbol name or address. Default: "main"
+
+    Returns:
+        Dict with:
+        - regions: List of memory regions, each containing:
+          - start: Region start address
+          - end: Region end address
+          - permissions: rwxp permission string
+          - offset: File offset for mapped files
+          - path: Backing file path (if file-backed)
+        - summary: Count of regions by type (code, data, stack, heap, etc.)
+
+    Example:
+        gdb_vmmap("crackme")
+        gdb_vmmap("crackme", breakpoint="0x401234")
+        gdb_vmmap("crackme", breakpoint="after_mmap")
+    """
+    return gdb_request("/gdb/vmmap", "POST", {
+        "binary": binary,
+        "breakpoint": breakpoint
+    })
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_search_pattern(binary: str, pattern: str, breakpoint: str = "main", pattern_type: str = "string") -> dict:
+    """
+    Search for a pattern in the memory of a running process. Scans all readable
+    memory regions for occurrences of the given pattern. Useful for finding
+    strings, byte sequences, pointers, and data structures at runtime.
+
+    Args:
+        binary: Name of the binary to debug (must be uploaded first)
+        pattern: The pattern to search for. Interpretation depends on pattern_type:
+                 - For "string": a literal text string (e.g. "password", "FLAG{")
+                 - For "hex": hex byte sequence (e.g. "deadbeef", "48 89 e5")
+                 - For "pointer": an address value to find references to (e.g. "0x401000")
+        breakpoint: Location to break at before searching. The search runs
+                    against the process memory state at this point. Default: "main"
+        pattern_type: How to interpret the pattern argument:
+                      - "string": Search for UTF-8 string (default)
+                      - "hex": Search for raw byte pattern
+                      - "pointer": Search for pointer/address value
+
+    Returns:
+        Dict with:
+        - matches: List of addresses where the pattern was found
+        - regions: Which memory regions contained matches
+        - count: Total number of matches found
+
+    Example:
+        gdb_search_pattern("crackme", "password", pattern_type="string")
+        gdb_search_pattern("crackme", "deadbeef", pattern_type="hex")
+        gdb_search_pattern("crackme", "0x401000", breakpoint="check_input",
+                           pattern_type="pointer")
+    """
+    return gdb_request("/gdb/search_pattern", "POST", {
+        "binary": binary,
+        "pattern": pattern,
+        "breakpoint": breakpoint,
+        "pattern_type": pattern_type
+    })
+
+
+# =============================================================================
 # TRAJECTORY RECORDING TOOLS
 # =============================================================================
 

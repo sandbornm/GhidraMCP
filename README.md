@@ -23,7 +23,7 @@ MCP Server + Ghidra Plugin
 
 ## Semi-Autonomous Reverse Engineering
 
-GhidraMCP provides 90+ MCP tools across static analysis, dynamic analysis, annotation, and patching to enable LLM-driven reverse engineering. Key capability areas:
+GhidraMCP provides 105+ MCP tools across static analysis, dynamic analysis, annotation, and patching to enable LLM-driven reverse engineering. Key capability areas:
 
 ### Decompilation & Rename
 
@@ -44,6 +44,22 @@ Tools for prioritizing and understanding functions during autonomous analysis:
 - **`get_function_cfg_info`** - Get control flow metrics including basic block count, cyclomatic complexity, branch count, and complexity classification
 - **`search_functions_by_name`** - Fuzzy search for functions by substring
 
+### Dynamic Analysis & Instrumentation
+
+Full runtime debugging via GDB/GEF Docker container with Frida instrumentation:
+
+- **`gdb_read_registers`** - Dump all CPU registers at any breakpoint
+- **`gdb_read_memory`** - Read memory as hex, strings, or disassembly
+- **`gdb_step_execution`** - Single-step (stepi/nexti/step/next) with state capture
+- **`gdb_set_watchpoint`** - Hardware watchpoints for write/read/access
+- **`gdb_inspect_stack`** - Full stack frame inspection with backtrace
+- **`gdb_analyze_heap`** - GEF-powered heap analysis (chunks, bins, arenas)
+- **`gdb_vmmap`** - Virtual memory map with permissions
+- **`gdb_search_pattern`** - Search for patterns in process memory
+- **`gdb_rop_gadgets`** - Find ROP gadgets for exploit development
+- **`gdb_got_plt`** - Inspect GOT/PLT entries
+- **`gdb_frida_instrument`** / **`gdb_frida_trace`** / **`gdb_frida_hook`** - Frida-based function tracing and hooking
+
 ### Full Tool Categories
 
 | Category | Count | Examples |
@@ -53,7 +69,8 @@ Tools for prioritizing and understanding functions during autonomous analysis:
 | Type System | 6 | create/inspect structures, enums, set variable types |
 | Patching | 7 | patch bytes/instructions, NOP regions, export binary |
 | Navigation | 5 | goto address, bookmarks, current selection |
-| Dynamic Analysis (GDB) | 20+ | run, debug, strace, ltrace, checksec, binwalk |
+| Dynamic Analysis (GDB) | 35+ | registers, memory, stepping, watchpoints, heap, vmmap, ROP gadgets |
+| Frida Instrumentation | 3 | instrument, trace, hook function calls |
 | Trajectory Recording | 7 | record, analyze, export analysis sessions |
 
 # Installation
@@ -135,21 +152,63 @@ Another MCP client that supports multiple models on the backend is [5ire](https:
 
 # Testing
 
-The project includes a comprehensive Python test suite covering the MCP server bridge and trajectory recording system.
+The project includes a comprehensive Python test suite with 181 tests.
 
 ## Running Tests
 
 ```bash
-pip install pytest
+# Install dev dependencies
+pip install -r requirements-dev.txt
+
+# Run all tests
 python -m pytest tests/ -v
+
+# Run just unit tests (fast)
+python -m pytest tests/ -v -m "not integration and not slow"
+
+# Run with coverage
+python -m pytest tests/ --cov=bridge_mcp_ghidra --cov=trajectory_recorder --cov-report=term-missing
+
+# Run the full check script (lint + typecheck + tests)
+./scripts/check.sh
+
+# Auto-fix lint issues
+./scripts/check.sh --fix
 ```
 
-The test suite includes 136 tests covering:
+The test suite includes 181 tests covering:
 
-- **MCP Bridge (`test_bridge_mcp_ghidra.py`)** - Tests for all 90+ MCP tools with mocked HTTP responses, including error handling, parameter passing, pagination, and the trajectory recording decorator
-- **Trajectory Recorder (`test_trajectory_recorder.py`)** - Tests for recording, analysis, markdown export, thread safety, session management, and edge cases
+- **MCP Bridge (`test_bridge_mcp_ghidra.py`)** - 91 unit tests for all MCP tools with mocked HTTP responses
+- **Enhanced GDB Tools (`test_enhanced_gdb_tools.py`)** - 25 tests for registers, memory, stepping, watchpoints, Frida, ROP gadgets, etc.
+- **Integration Tests (`test_integration.py`)** - 20 tests for multi-tool workflows (triage, analysis, patching, error recovery)
+- **Trajectory Recorder (`test_trajectory_recorder.py`)** - 45 tests for recording, analysis, export, thread safety
 
-Tests mock the Ghidra HTTP server responses so they can run without a live Ghidra instance.
+Tests mock HTTP responses so they run without live Ghidra/GDB instances.
+
+## CI/CD
+
+GitHub Actions runs automatically on push/PR to main:
+- Linting (ruff) and type checking (mypy)
+- Unit tests on Python 3.10, 3.11, 3.12
+- Integration tests
+- Java/Maven Ghidra plugin build
+- Docker build validation
+- Security scanning
+
+## Pre-commit Hooks
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+This enables automatic linting, formatting, and type checking on every commit.
+
+# Additional Documentation
+
+- **[AGENTS.md](AGENTS.md)** - Quick-start guide for AI agents working with this toolchain
+- **[CLAUDE_CODE_SETUP.md](CLAUDE_CODE_SETUP.md)** - Configuration guide for Claude Code CLI and macOS desktop app
+- **[docker/README.md](docker/README.md)** - Docker container setup and API reference
 
 # Building from Source
 1. Copy the following files from your Ghidra directory to this project's `lib/` directory:
