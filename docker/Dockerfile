@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-dev \
     build-essential \
+    cmake \
     # Networking
     curl \
     wget \
@@ -44,22 +45,43 @@ RUN apt-get update && apt-get install -y \
     binwalk \
     xxd \
     hexedit \
+    # Additional tools for RE competitions
+    nasm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GEF (GDB Enhanced Features) - do this BEFORE network isolation
 RUN bash -c "$(curl -fsSL https://gef.blah.cat/sh)" || true
 
-# Install Python tools for exploit dev
+# Install Python tools for exploit dev and reverse engineering
 RUN pip3 install --no-cache-dir \
     flask \
     pwntools \
     capstone \
     keystone-engine \
-    unicorn
+    unicorn \
+    # ELF/binary analysis
+    pyelftools \
+    lief \
+    # Crypto libraries
+    pycryptodome \
+    # ROP gadget finding
+    ropper \
+    ROPGadget \
+    # Frida instrumentation
+    frida-tools \
+    # Symbolic execution / constraint solving
+    z3-solver \
+    # Additional analysis
+    angr \
+    archinfo \
+    # Hex/byte manipulation
+    hexdump
 
 # Create non-root user for safer execution
 RUN useradd -m -s /bin/bash analyst && \
     mkdir -p /analysis/bins && \
+    mkdir -p /analysis/logs && \
+    mkdir -p /analysis/frida_scripts && \
     chown -R analyst:analyst /analysis
 
 WORKDIR /analysis
@@ -71,7 +93,8 @@ RUN chown analyst:analyst /analysis/gdb_server.py
 # Expose ports:
 # 5000 - HTTP API for GDB commands
 # 1234 - gdbserver remote debugging
-EXPOSE 5000 1234
+# 27042 - Frida server
+EXPOSE 5000 1234 27042
 
 # Note: Running as root for now because GDB/strace need elevated privileges
 # For maximum security, uncomment USER line and use sudo where needed

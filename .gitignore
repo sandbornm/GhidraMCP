@@ -54,3 +54,4 @@ lib/*.jar
 
 
 __pycache__
+.venv/

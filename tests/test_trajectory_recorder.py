@@ -8,11 +8,9 @@ import json
 import os
 import sys
 import tempfile
-import time
 import threading
+
 import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -25,10 +23,10 @@ from trajectory_recorder import (
     record_tool_call,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def tmp_dir():
@@ -50,16 +48,12 @@ def populated_trajectory(tmp_dir):
 
     # Record various tool calls
     rec.record("list_functions", {}, ["main", "helper"], 50.0, True)
-    rec.record("decompile_function", {"name": "main"},
-               "int main() { return 0; }", 150.0, True)
-    rec.record("rename_function", {"old_name": "FUN_001", "new_name": "decrypt"},
-               "Renamed successfully", 30.0, True)
-    rec.record("patch_bytes", {"address": "0x401000", "bytes": "90 90"},
-               "Patched 2 bytes", 25.0, True)
+    rec.record("decompile_function", {"name": "main"}, "int main() { return 0; }", 150.0, True)
+    rec.record("rename_function", {"old_name": "FUN_001", "new_name": "decrypt"}, "Renamed successfully", 30.0, True)
+    rec.record("patch_bytes", {"address": "0x401000", "bytes": "90 90"}, "Patched 2 bytes", 25.0, True)
     rec.record("gdb_run_binary", {"binary": "test"}, {"stdout": "ok"}, 200.0, True)
     rec.record("unknown_tool", {}, "result", 10.0, True)
-    rec.record("decompile_function", {"name": "broken"},
-               "Decompilation failed", 100.0, False)
+    rec.record("decompile_function", {"name": "broken"}, "Decompilation failed", 100.0, False)
 
     rec.add_note("Found interesting function at 0x401000", "finding")
     rec.end_session("Test session completed")
@@ -70,6 +64,7 @@ def populated_trajectory(tmp_dir):
 # ===========================================================================
 # Tests for TrajectoryRecorder initialization
 # ===========================================================================
+
 
 class TestRecorderInit:
     def test_basic_init(self, tmp_dir):
@@ -86,7 +81,7 @@ class TestRecorderInit:
     def test_creates_output_dir(self):
         with tempfile.TemporaryDirectory() as base:
             subdir = os.path.join(base, "nested", "deep")
-            rec = TrajectoryRecorder(output_dir=subdir, binary_name="test")
+            TrajectoryRecorder(output_dir=subdir, binary_name="test")
             assert os.path.isdir(subdir)
 
     def test_session_start_written(self, recorder):
@@ -107,10 +102,10 @@ class TestRecorderInit:
 # Tests for recording tool calls
 # ===========================================================================
 
+
 class TestRecording:
     def test_record_tool_call(self, recorder):
-        recorder.record("decompile_function", {"name": "main"},
-                        "int main() { return 0; }", 150.5, True)
+        recorder.record("decompile_function", {"name": "main"}, "int main() { return 0; }", 150.5, True)
 
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
@@ -137,35 +132,33 @@ class TestRecording:
             ("totally_unknown", "unknown"),
         ]
 
-        for tool, expected_cat in test_cases:
+        for tool, _expected_cat in test_cases:
             recorder.record(tool, {}, "result", 10.0, True)
 
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
 
         for i, (tool, expected_cat) in enumerate(test_cases):
-            assert tool_calls[i]["category"] == expected_cat, \
+            assert tool_calls[i]["category"] == expected_cat, (
                 f"Tool {tool} expected category {expected_cat}, got {tool_calls[i]['category']}"
+            )
 
     def test_record_failed_call(self, recorder):
-        recorder.record("decompile_function", {"name": "nonexistent"},
-                        "Function not found", 50.0, False)
+        recorder.record("decompile_function", {"name": "nonexistent"}, "Function not found", 50.0, False)
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
         assert tool_calls[0]["success"] is False
 
     def test_record_address_extraction_from_params(self, recorder):
-        recorder.record("patch_bytes",
-                        {"address": "0x401000", "bytes": "90"},
-                        "Patched", 20.0, True)
+        recorder.record("patch_bytes", {"address": "0x401000", "bytes": "90"}, "Patched", 20.0, True)
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
         assert "0x401000" in tool_calls[0]["address_context"]
 
     def test_record_address_extraction_from_result(self, recorder):
-        recorder.record("get_xrefs_to", {"address": "0x401000"},
-                        "From 0x402000 in main [CALL]\nFrom 0x403000 [DATA]",
-                        30.0, True)
+        recorder.record(
+            "get_xrefs_to", {"address": "0x401000"}, "From 0x402000 in main [CALL]\nFrom 0x403000 [DATA]", 30.0, True
+        )
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
         addrs = tool_calls[0]["address_context"]
@@ -173,46 +166,37 @@ class TestRecording:
         assert "0x402000" in addrs
 
     def test_record_full_result_for_patching(self, recorder):
-        recorder.record("patch_bytes",
-                        {"address": "0x401000"},
-                        "Patched 2 bytes at 0x401000",
-                        20.0, True)
+        recorder.record("patch_bytes", {"address": "0x401000"}, "Patched 2 bytes at 0x401000", 20.0, True)
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
         assert "result" in tool_calls[0]
 
     def test_record_no_full_result_for_static_analysis(self, recorder):
-        recorder.record("list_functions", {},
-                        "func1\nfunc2\nfunc3",
-                        20.0, True)
+        recorder.record("list_functions", {}, "func1\nfunc2\nfunc3", 20.0, True)
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
         assert "result" not in tool_calls[0]
 
     def test_result_summarization_string(self, recorder):
-        recorder.record("decompile_function", {"name": "main"},
-                        "line1\nline2\nline3", 50.0, True)
+        recorder.record("decompile_function", {"name": "main"}, "line1\nline2\nline3", 50.0, True)
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
         assert "3 lines" in tool_calls[0]["result_summary"]
 
     def test_result_summarization_list(self, recorder):
-        recorder.record("list_functions", {},
-                        ["f1", "f2", "f3"], 50.0, True)
+        recorder.record("list_functions", {}, ["f1", "f2", "f3"], 50.0, True)
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
         assert "3 items" in tool_calls[0]["result_summary"]
 
     def test_result_summarization_dict_error(self, recorder):
-        recorder.record("gdb_health", {},
-                        {"error": "Connection refused to server"}, 50.0, False)
+        recorder.record("gdb_health", {}, {"error": "Connection refused to server"}, 50.0, False)
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
         assert "Error:" in tool_calls[0]["result_summary"]
 
     def test_result_summarization_dict_normal(self, recorder):
-        recorder.record("gdb_health", {},
-                        {"status": "ok", "platform": "linux"}, 50.0, True)
+        recorder.record("gdb_health", {}, {"status": "ok", "platform": "linux"}, 50.0, True)
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
         assert "2 keys" in tool_calls[0]["result_summary"]
@@ -221,6 +205,7 @@ class TestRecording:
 # ===========================================================================
 # Tests for notes
 # ===========================================================================
+
 
 class TestNotes:
     def test_add_note(self, recorder):
@@ -241,6 +226,7 @@ class TestNotes:
 # ===========================================================================
 # Tests for session management
 # ===========================================================================
+
 
 class TestSessionManagement:
     def test_end_session(self, recorder):
@@ -272,6 +258,7 @@ class TestSessionManagement:
 # Tests for thread safety
 # ===========================================================================
 
+
 class TestThreadSafety:
     def test_concurrent_recording(self, tmp_dir):
         rec = TrajectoryRecorder(output_dir=tmp_dir, binary_name="concurrent_test")
@@ -280,8 +267,7 @@ class TestThreadSafety:
         def record_batch(thread_id):
             try:
                 for i in range(20):
-                    rec.record(f"tool_{thread_id}_{i}", {"i": i},
-                               f"result_{i}", float(i), True)
+                    rec.record(f"tool_{thread_id}_{i}", {"i": i}, f"result_{i}", float(i), True)
             except Exception as e:
                 errors.append(e)
 
@@ -301,6 +287,7 @@ class TestThreadSafety:
 # ===========================================================================
 # Tests for analyze_trajectory
 # ===========================================================================
+
 
 class TestAnalyzeTrajectory:
     def test_basic_analysis(self, populated_trajectory):
@@ -349,6 +336,7 @@ class TestAnalyzeTrajectory:
 # Tests for export_trajectory_markdown
 # ===========================================================================
 
+
 class TestExportMarkdown:
     def test_export_to_string(self, populated_trajectory):
         md = export_trajectory_markdown(str(populated_trajectory))
@@ -383,15 +371,18 @@ class TestExportMarkdown:
 # Tests for global recorder functions
 # ===========================================================================
 
+
 class TestGlobalRecorder:
     def test_get_recorder_none_by_default(self):
         # Reset global state
         import trajectory_recorder
+
         trajectory_recorder._recorder = None
         assert get_recorder() is None
 
     def test_init_recorder(self, tmp_dir):
         import trajectory_recorder
+
         rec = init_recorder(output_dir=tmp_dir, binary_name="global_test")
         assert rec is not None
         assert get_recorder() is rec
@@ -404,9 +395,11 @@ class TestGlobalRecorder:
 # Tests for record_tool_call decorator
 # ===========================================================================
 
+
 class TestRecordToolCallDecorator:
     def test_decorator_without_recorder(self):
         import trajectory_recorder
+
         trajectory_recorder._recorder = None
 
         @record_tool_call
@@ -418,6 +411,7 @@ class TestRecordToolCallDecorator:
 
     def test_decorator_with_recorder(self, tmp_dir):
         import trajectory_recorder
+
         rec = init_recorder(output_dir=tmp_dir, binary_name="decorator_test")
 
         @record_tool_call
@@ -437,6 +431,7 @@ class TestRecordToolCallDecorator:
 
     def test_decorator_records_failure(self, tmp_dir):
         import trajectory_recorder
+
         rec = init_recorder(output_dir=tmp_dir, binary_name="fail_test")
 
         @record_tool_call
@@ -459,6 +454,7 @@ class TestRecordToolCallDecorator:
 # Tests for edge cases
 # ===========================================================================
 
+
 class TestEdgeCases:
     def test_empty_trajectory(self, tmp_dir):
         rec = TrajectoryRecorder(output_dir=tmp_dir, binary_name="empty")
@@ -475,9 +471,7 @@ class TestEdgeCases:
         assert "result_summary" in tool_calls[0]
 
     def test_special_characters_in_params(self, recorder):
-        recorder.record("rename_function",
-                        {"old_name": "func<test>&\"'", "new_name": "new_func"},
-                        "ok", 10.0, True)
+        recorder.record("rename_function", {"old_name": "func<test>&\"'", "new_name": "new_func"}, "ok", 10.0, True)
         entries = _read_entries(recorder.get_session_path())
         tool_calls = [e for e in entries if e["type"] == "tool_call"]
         assert tool_calls[0]["params"]["old_name"] == "func<test>&\"'"
@@ -500,6 +494,7 @@ class TestEdgeCases:
 # ===========================================================================
 # Helper
 # ===========================================================================
+
 
 def _read_entries(path):
     """Read all JSONL entries from a trajectory file."""

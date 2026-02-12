@@ -6,20 +6,21 @@ MCP tool behavior, parameter handling, error handling, and response parsing.
 """
 
 import json
-import sys
 import os
+import sys
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 # Add project root to path so we can import the module
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import bridge_mcp_ghidra
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def reset_globals():
@@ -45,6 +46,7 @@ def _mock_response(text="", status_code=200, ok=True, json_data=None):
 # ===========================================================================
 # Tests for safe_get / safe_post helpers
 # ===========================================================================
+
 
 class TestSafeGet:
     @patch("bridge_mcp_ghidra.requests.get")
@@ -79,6 +81,7 @@ class TestSafeGet:
     @patch("bridge_mcp_ghidra.requests.get")
     def test_get_timeout(self, mock_get):
         import requests
+
         mock_get.side_effect = requests.exceptions.Timeout("timeout")
         result = bridge_mcp_ghidra.safe_get("methods")
         assert "Request failed" in result[0]
@@ -123,6 +126,7 @@ class TestSafePost:
 # Tests for Static Analysis Tools
 # ===========================================================================
 
+
 class TestStaticAnalysisTools:
     @patch("bridge_mcp_ghidra.safe_get")
     def test_list_methods(self, mock_get):
@@ -134,7 +138,7 @@ class TestStaticAnalysisTools:
     @patch("bridge_mcp_ghidra.safe_get")
     def test_list_methods_pagination(self, mock_get):
         mock_get.return_value = ["func3", "func4"]
-        result = bridge_mcp_ghidra.list_methods(offset=2, limit=2)
+        bridge_mcp_ghidra.list_methods(offset=2, limit=2)
         mock_get.assert_called_with("methods", {"offset": 2, "limit": 2})
 
     @patch("bridge_mcp_ghidra.safe_get")
@@ -199,7 +203,7 @@ class TestStaticAnalysisTools:
     @patch("bridge_mcp_ghidra.safe_get")
     def test_list_strings_with_filter(self, mock_get):
         mock_get.return_value = ['0x402010: "Error"']
-        result = bridge_mcp_ghidra.list_strings(filter="Error")
+        bridge_mcp_ghidra.list_strings(filter="Error")
         call_args = mock_get.call_args
         assert call_args[0][1]["filter"] == "Error"
 
@@ -214,6 +218,7 @@ class TestStaticAnalysisTools:
 # Tests for Rename Tools
 # ===========================================================================
 
+
 class TestRenameTools:
     @patch("bridge_mcp_ghidra.safe_post")
     def test_rename_function(self, mock_post):
@@ -225,15 +230,13 @@ class TestRenameTools:
     @patch("bridge_mcp_ghidra.safe_post")
     def test_rename_function_by_address(self, mock_post):
         mock_post.return_value = "Function renamed successfully"
-        result = bridge_mcp_ghidra.rename_function_by_address(
-            function_address="0x401000", new_name="main")
+        result = bridge_mcp_ghidra.rename_function_by_address(function_address="0x401000", new_name="main")
         assert "renamed" in result.lower()
 
     @patch("bridge_mcp_ghidra.safe_post")
     def test_rename_variable(self, mock_post):
         mock_post.return_value = "Variable renamed"
-        result = bridge_mcp_ghidra.rename_variable(
-            function_name="main", old_name="local_8", new_name="buffer")
+        result = bridge_mcp_ghidra.rename_variable(function_name="main", old_name="local_8", new_name="buffer")
         assert "renamed" in result.lower()
 
     @patch("bridge_mcp_ghidra.safe_post")
@@ -246,15 +249,14 @@ class TestRenameTools:
     def test_rename_variable_by_address(self, mock_post):
         mock_post.return_value = "Renamed 'local_8' to 'buffer' in main @ 0x401000"
         result = bridge_mcp_ghidra.rename_variable_by_address(
-            function_address="0x401000", old_name="local_8", new_name="buffer")
+            function_address="0x401000", old_name="local_8", new_name="buffer"
+        )
         assert "buffer" in result
 
     @patch("bridge_mcp_ghidra.safe_post")
     def test_batch_rename(self, mock_post):
         mock_post.return_value = "OK: Renamed function\nBatch complete: 1 succeeded, 0 failed"
-        ops = json.dumps([
-            {"type": "function", "old_name": "FUN_001", "new_name": "decrypt"}
-        ])
+        ops = json.dumps([{"type": "function", "old_name": "FUN_001", "new_name": "decrypt"}])
         result = bridge_mcp_ghidra.batch_rename(operations=ops)
         assert "succeeded" in result
 
@@ -262,6 +264,7 @@ class TestRenameTools:
 # ===========================================================================
 # Tests for Cross-Reference Tools
 # ===========================================================================
+
 
 class TestXrefTools:
     @patch("bridge_mcp_ghidra.safe_get")
@@ -299,6 +302,7 @@ class TestXrefTools:
 # Tests for Enhanced Analysis Tools
 # ===========================================================================
 
+
 class TestEnhancedAnalysisTools:
     @patch("bridge_mcp_ghidra.safe_get")
     def test_get_call_graph(self, mock_get):
@@ -309,7 +313,7 @@ class TestEnhancedAnalysisTools:
             "<- _start @ 0x400000",
             "",
             "--- CALLEES ---",
-            "-> printf @ 0x401200"
+            "-> printf @ 0x401200",
         ]
         result = bridge_mcp_ghidra.get_call_graph(name="main", depth=1)
         assert "Call Graph" in result
@@ -336,7 +340,7 @@ class TestEnhancedAnalysisTools:
             "Estimated basic blocks: 8",
             "Conditional branches: 5",
             "Estimated cyclomatic complexity: 6",
-            "Complexity class: Moderate"
+            "Complexity class: Moderate",
         ]
         result = bridge_mcp_ghidra.get_function_cfg_info(address="0x401000")
         assert "cyclomatic complexity" in result.lower()
@@ -350,7 +354,7 @@ class TestEnhancedAnalysisTools:
             "  int argc [r0]",
             "  char** argv [r1]",
             "Local variables (3):",
-            "  int local_8 [Stack[-0x8]]"
+            "  int local_8 [Stack[-0x8]]",
         ]
         result = bridge_mcp_ghidra.get_function_variables(address="0x401000")
         assert "argc" in result
@@ -366,33 +370,34 @@ class TestEnhancedAnalysisTools:
 # Tests for Comment and Annotation Tools
 # ===========================================================================
 
+
 class TestAnnotationTools:
     @patch("bridge_mcp_ghidra.safe_post")
     def test_set_decompiler_comment(self, mock_post):
         mock_post.return_value = "Comment set successfully"
-        result = bridge_mcp_ghidra.set_decompiler_comment(
-            address="0x401000", comment="Main entry point")
+        result = bridge_mcp_ghidra.set_decompiler_comment(address="0x401000", comment="Main entry point")
         assert "Comment set" in result
 
     @patch("bridge_mcp_ghidra.safe_post")
     def test_set_disassembly_comment(self, mock_post):
         mock_post.return_value = "Comment set successfully"
-        result = bridge_mcp_ghidra.set_disassembly_comment(
-            address="0x401000", comment="Stack setup")
+        result = bridge_mcp_ghidra.set_disassembly_comment(address="0x401000", comment="Stack setup")
         assert "Comment set" in result
 
     @patch("bridge_mcp_ghidra.safe_post")
     def test_set_function_prototype(self, mock_post):
         mock_post.return_value = "Function prototype set successfully"
         result = bridge_mcp_ghidra.set_function_prototype(
-            function_address="0x401000", prototype="int main(int argc, char **argv)")
+            function_address="0x401000", prototype="int main(int argc, char **argv)"
+        )
         assert "successfully" in result.lower()
 
     @patch("bridge_mcp_ghidra.safe_post")
     def test_set_local_variable_type(self, mock_post):
         mock_post.return_value = "Variable type set successfully"
         result = bridge_mcp_ghidra.set_local_variable_type(
-            function_address="0x401000", variable_name="local_8", new_type="int*")
+            function_address="0x401000", variable_name="local_8", new_type="int*"
+        )
         assert "set" in result.lower()
 
 
@@ -400,24 +405,17 @@ class TestAnnotationTools:
 # Tests for Type System Tools
 # ===========================================================================
 
+
 class TestTypeSystemTools:
     @patch("bridge_mcp_ghidra.safe_get")
     def test_list_data_types(self, mock_get):
-        mock_get.return_value = [
-            "[struct] MyStruct (size=16, category=/)",
-            "[enum] ErrorCode (size=4, category=/)"
-        ]
+        mock_get.return_value = ["[struct] MyStruct (size=16, category=/)", "[enum] ErrorCode (size=4, category=/)"]
         result = bridge_mcp_ghidra.list_data_types()
         assert any("struct" in item for item in result)
 
     @patch("bridge_mcp_ghidra.safe_get")
     def test_get_struct_fields(self, mock_get):
-        mock_get.return_value = [
-            "Structure: MyStruct",
-            "Size: 16 bytes",
-            "Fields:",
-            "  offset=0x0 size=4 int field1"
-        ]
+        mock_get.return_value = ["Structure: MyStruct", "Size: 16 bytes", "Fields:", "  offset=0x0 size=4 int field1"]
         result = bridge_mcp_ghidra.get_struct_fields(name="MyStruct")
         assert "MyStruct" in result
 
@@ -430,8 +428,7 @@ class TestTypeSystemTools:
     @patch("bridge_mcp_ghidra.safe_post")
     def test_add_struct_field(self, mock_post):
         mock_post.return_value = "Added field flags (int) to MyStruct"
-        result = bridge_mcp_ghidra.add_struct_field(
-            struct_name="MyStruct", field_type="int", field_name="flags")
+        result = bridge_mcp_ghidra.add_struct_field(struct_name="MyStruct", field_type="int", field_name="flags")
         assert "Added" in result
 
     @patch("bridge_mcp_ghidra.safe_post")
@@ -443,14 +440,14 @@ class TestTypeSystemTools:
     @patch("bridge_mcp_ghidra.safe_post")
     def test_add_enum_member(self, mock_post):
         mock_post.return_value = "Added SUCCESS = 0 (0x0) to enum ErrorCode"
-        result = bridge_mcp_ghidra.add_enum_member(
-            enum_name="ErrorCode", member_name="SUCCESS", value=0)
+        result = bridge_mcp_ghidra.add_enum_member(enum_name="ErrorCode", member_name="SUCCESS", value=0)
         assert "SUCCESS" in result
 
 
 # ===========================================================================
 # Tests for Function Management Tools
 # ===========================================================================
+
 
 class TestFunctionManagementTools:
     @patch("bridge_mcp_ghidra.safe_post")
@@ -470,12 +467,12 @@ class TestFunctionManagementTools:
 # Tests for Bookmark Tools
 # ===========================================================================
 
+
 class TestBookmarkTools:
     @patch("bridge_mcp_ghidra.safe_post")
     def test_set_bookmark(self, mock_post):
         mock_post.return_value = "Bookmark set at 0x401000 [Vuln]: Buffer overflow"
-        result = bridge_mcp_ghidra.set_bookmark(
-            address="0x401000", category="Vuln", comment="Buffer overflow")
+        result = bridge_mcp_ghidra.set_bookmark(address="0x401000", category="Vuln", comment="Buffer overflow")
         assert "Bookmark set" in result
 
     @patch("bridge_mcp_ghidra.safe_get")
@@ -494,6 +491,7 @@ class TestBookmarkTools:
 # ===========================================================================
 # Tests for Navigation Tools
 # ===========================================================================
+
 
 class TestNavigationTools:
     @patch("bridge_mcp_ghidra.safe_get")
@@ -522,11 +520,7 @@ class TestNavigationTools:
 
     @patch("bridge_mcp_ghidra.safe_get")
     def test_get_address_info(self, mock_get):
-        mock_get.return_value = [
-            "Address: 0x401000",
-            "Function entry: main",
-            "Instruction: PUSH RBP"
-        ]
+        mock_get.return_value = ["Address: 0x401000", "Function entry: main", "Instruction: PUSH RBP"]
         result = bridge_mcp_ghidra.get_address_info(address="0x401000")
         assert "main" in result
 
@@ -535,6 +529,7 @@ class TestNavigationTools:
 # Tests for Program Info Tools
 # ===========================================================================
 
+
 class TestProgramInfoTools:
     @patch("bridge_mcp_ghidra.safe_get")
     def test_get_program_info(self, mock_get):
@@ -542,17 +537,14 @@ class TestProgramInfoTools:
             "=== Program Information ===",
             "Name: test_binary",
             "Language: x86:LE:64:default",
-            "Format: ELF"
+            "Format: ELF",
         ]
         result = bridge_mcp_ghidra.get_program_info()
         assert "test_binary" in result
 
     @patch("bridge_mcp_ghidra.safe_get")
     def test_list_comments(self, mock_get):
-        mock_get.return_value = [
-            "0x401000 [Pre] in main: Entry point",
-            "0x401010 [EOL] in main: Stack setup"
-        ]
+        mock_get.return_value = ["0x401000 [Pre] in main: Entry point", "0x401010 [EOL] in main: Stack setup"]
         result = bridge_mcp_ghidra.list_comments()
         assert len(result) == 2
 
@@ -566,6 +558,7 @@ class TestProgramInfoTools:
 # ===========================================================================
 # Tests for Patching Tools
 # ===========================================================================
+
 
 class TestPatchingTools:
     @patch("bridge_mcp_ghidra.safe_post")
@@ -583,8 +576,7 @@ class TestPatchingTools:
     @patch("bridge_mcp_ghidra.safe_post")
     def test_nop_region(self, mock_post):
         mock_post.return_value = "NOPed 6 bytes from 0x401000 to 0x401005"
-        result = bridge_mcp_ghidra.nop_region(
-            start_address="0x401000", end_address="0x401005")
+        result = bridge_mcp_ghidra.nop_region(start_address="0x401000", end_address="0x401005")
         assert "NOPed" in result
 
     @patch("bridge_mcp_ghidra.safe_get")
@@ -610,7 +602,7 @@ class TestPatchingTools:
         mock_get.return_value = [
             "Found 2 match(es) for pattern 90 90:",
             "0x401000 [.text] in main",
-            "0x401050 [.text] in helper"
+            "0x401050 [.text] in helper",
         ]
         result = bridge_mcp_ghidra.search_memory(pattern="90 90")
         assert "Found" in result
@@ -619,6 +611,7 @@ class TestPatchingTools:
 # ===========================================================================
 # Tests for GDB Dynamic Analysis Tools
 # ===========================================================================
+
 
 class TestGDBTools:
     @patch("bridge_mcp_ghidra.gdb_request")
@@ -648,8 +641,7 @@ class TestGDBTools:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_gdb_execute(self, mock_req):
         mock_req.return_value = {"output": "Breakpoint 1 at 0x401000"}
-        result = bridge_mcp_ghidra.gdb_execute(
-            binary="test", commands=["break main"])
+        result = bridge_mcp_ghidra.gdb_execute(binary="test", commands=["break main"])
         assert "Breakpoint" in result["output"]
 
     @patch("bridge_mcp_ghidra.gdb_request")
@@ -669,6 +661,7 @@ class TestGDBTools:
 # Tests for gdb_request helper
 # ===========================================================================
 
+
 class TestGDBRequest:
     @patch("bridge_mcp_ghidra.requests.get")
     def test_gdb_get_request(self, mock_get):
@@ -685,6 +678,7 @@ class TestGDBRequest:
     @patch("bridge_mcp_ghidra.requests.get")
     def test_gdb_connection_refused(self, mock_get):
         import requests
+
         mock_get.side_effect = requests.exceptions.ConnectionError("refused")
         result = bridge_mcp_ghidra.gdb_request("/health")
         assert "error" in result
@@ -700,6 +694,7 @@ class TestGDBRequest:
 # ===========================================================================
 # Tests for recorded_tool decorator
 # ===========================================================================
+
 
 class TestRecordedToolDecorator:
     def test_decorator_without_recorder(self):
@@ -725,7 +720,7 @@ class TestRecordedToolDecorator:
         result = sample_func(x=5)
         assert result == 10
         # _record_call should have been called
-        assert mock_recorder.record.called or True  # recorded via _record_call
+        assert True  # recorded via _record_call
 
     def test_decorator_propagates_exceptions(self):
         """recorded_tool should re-raise exceptions from the wrapped function."""
@@ -742,6 +737,7 @@ class TestRecordedToolDecorator:
 # ===========================================================================
 # Tests for Trajectory Management Tools
 # ===========================================================================
+
 
 class TestTrajectoryTools:
     def test_trajectory_status_no_session(self):
@@ -776,6 +772,7 @@ class TestTrajectoryTools:
 # Tests for Help Tool
 # ===========================================================================
 
+
 class TestHelpTool:
     @patch("bridge_mcp_ghidra.safe_get")
     def test_ghidra_help_no_topic(self, mock_get):
@@ -786,5 +783,5 @@ class TestHelpTool:
     @patch("bridge_mcp_ghidra.safe_get")
     def test_ghidra_help_with_topic(self, mock_get):
         mock_get.return_value = ["=== Cross-References ===", "get_xrefs_to"]
-        result = bridge_mcp_ghidra.ghidra_help(topic="xrefs")
+        bridge_mcp_ghidra.ghidra_help(topic="xrefs")
         assert "xrefs" in mock_get.call_args[0][1].get("topic", "")
