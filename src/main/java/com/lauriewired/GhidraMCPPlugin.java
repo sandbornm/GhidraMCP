@@ -2608,7 +2608,11 @@ public class GhidraMCPPlugin extends Plugin {
             if (hasComments) result.append("\n");
 
             // References to this address
-            Reference[] refsTo = program.getReferenceManager().getReferencesTo(addr).toArray(new Reference[0]);
+            java.util.List<Reference> refsToList = new java.util.ArrayList<>();
+            for (Reference ref : program.getReferenceManager().getReferencesTo(addr)) {
+                refsToList.add(ref);
+            }
+            Reference[] refsTo = refsToList.toArray(new Reference[0]);
             if (refsTo.length > 0) {
                 result.append("References TO this address (").append(refsTo.length).append("):\n");
                 int shown = Math.min(refsTo.length, 10);
@@ -2822,8 +2826,6 @@ public class GhidraMCPPlugin extends Plugin {
         try {
             SwingUtilities.invokeAndWait(() -> {
                 try {
-                    ghidra.app.services.AnalysisService analysisSvc = tool.getService(ghidra.app.services.AnalysisService.class);
-
                     // Use AutoAnalysisManager as fallback
                     ghidra.app.plugin.core.analysis.AutoAnalysisManager mgr =
                         ghidra.app.plugin.core.analysis.AutoAnalysisManager.getAnalysisManager(program);
