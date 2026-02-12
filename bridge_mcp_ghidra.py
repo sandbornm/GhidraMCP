@@ -36,6 +36,7 @@ gdb_server_url = DEFAULT_GDB_SERVER
 # Global trajectory recorder
 trajectory_recorder: TrajectoryRecorder | None = None
 
+
 def _record_call(tool_name: str, params: dict, result, duration_ms: float, success: bool = True):
     """Record a tool call to the trajectory if recording is active."""
     global trajectory_recorder
@@ -46,6 +47,7 @@ def _record_call(tool_name: str, params: dict, result, duration_ms: float, succe
 def recorded_tool(func):
     """Decorator that records tool calls to the trajectory."""
     from functools import wraps
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         global trajectory_recorder
@@ -64,6 +66,7 @@ def recorded_tool(func):
             if trajectory_recorder:
                 duration_ms = (time.time() - start) * 1000
                 _record_call(func.__name__, kwargs, result, duration_ms, success)
+
     return wrapper
 
 
@@ -78,7 +81,7 @@ def safe_get(endpoint: str, params: dict = None) -> list:
 
     try:
         response = requests.get(url, params=params, timeout=30)
-        response.encoding = 'utf-8'
+        response.encoding = "utf-8"
         if response.ok:
             return response.text.splitlines()
         else:
@@ -94,13 +97,14 @@ def safe_post(endpoint: str, data: dict | str) -> str:
             response = requests.post(url, data=data, timeout=30)
         else:
             response = requests.post(url, data=data.encode("utf-8"), timeout=5)
-        response.encoding = 'utf-8'
+        response.encoding = "utf-8"
         if response.ok:
             return response.text.strip()
         else:
             return f"Error {response.status_code}: {response.text.strip()}"
     except Exception as e:
         return f"Request failed: {str(e)}"
+
 
 @mcp.tool()
 @recorded_tool
@@ -110,6 +114,7 @@ def list_methods(offset: int = 0, limit: int = 100) -> list:
     """
     return safe_get("methods", {"offset": offset, "limit": limit})
 
+
 @mcp.tool()
 @recorded_tool
 def list_classes(offset: int = 0, limit: int = 100) -> list:
@@ -117,6 +122,7 @@ def list_classes(offset: int = 0, limit: int = 100) -> list:
     List all namespace/class names in the program with pagination.
     """
     return safe_get("classes", {"offset": offset, "limit": limit})
+
 
 @mcp.tool()
 @recorded_tool
@@ -126,6 +132,7 @@ def decompile_function(name: str) -> str:
     """
     return safe_post("decompile", name)
 
+
 @mcp.tool()
 @recorded_tool
 def rename_function(old_name: str, new_name: str) -> str:
@@ -133,6 +140,7 @@ def rename_function(old_name: str, new_name: str) -> str:
     Rename a function by its current name to a new user-defined name.
     """
     return safe_post("renameFunction", {"oldName": old_name, "newName": new_name})
+
 
 @mcp.tool()
 @recorded_tool
@@ -142,6 +150,7 @@ def rename_data(address: str, new_name: str) -> str:
     """
     return safe_post("renameData", {"address": address, "newName": new_name})
 
+
 @mcp.tool()
 @recorded_tool
 def list_segments(offset: int = 0, limit: int = 100) -> list:
@@ -149,6 +158,7 @@ def list_segments(offset: int = 0, limit: int = 100) -> list:
     List all memory segments in the program with pagination.
     """
     return safe_get("segments", {"offset": offset, "limit": limit})
+
 
 @mcp.tool()
 @recorded_tool
@@ -158,6 +168,7 @@ def list_imports(offset: int = 0, limit: int = 100) -> list:
     """
     return safe_get("imports", {"offset": offset, "limit": limit})
 
+
 @mcp.tool()
 @recorded_tool
 def list_exports(offset: int = 0, limit: int = 100) -> list:
@@ -165,6 +176,7 @@ def list_exports(offset: int = 0, limit: int = 100) -> list:
     List exported functions/symbols with pagination.
     """
     return safe_get("exports", {"offset": offset, "limit": limit})
+
 
 @mcp.tool()
 @recorded_tool
@@ -174,6 +186,7 @@ def list_namespaces(offset: int = 0, limit: int = 100) -> list:
     """
     return safe_get("namespaces", {"offset": offset, "limit": limit})
 
+
 @mcp.tool()
 @recorded_tool
 def list_data_items(offset: int = 0, limit: int = 100) -> list:
@@ -181,6 +194,7 @@ def list_data_items(offset: int = 0, limit: int = 100) -> list:
     List defined data labels and their values with pagination.
     """
     return safe_get("data", {"offset": offset, "limit": limit})
+
 
 @mcp.tool()
 @recorded_tool
@@ -192,17 +206,15 @@ def search_functions_by_name(query: str, offset: int = 0, limit: int = 100) -> l
         return ["Error: query string is required"]
     return safe_get("searchFunctions", {"query": query, "offset": offset, "limit": limit})
 
+
 @mcp.tool()
 @recorded_tool
 def rename_variable(function_name: str, old_name: str, new_name: str) -> str:
     """
     Rename a local variable within a function.
     """
-    return safe_post("renameVariable", {
-        "functionName": function_name,
-        "oldName": old_name,
-        "newName": new_name
-    })
+    return safe_post("renameVariable", {"functionName": function_name, "oldName": old_name, "newName": new_name})
+
 
 @mcp.tool()
 @recorded_tool
@@ -212,6 +224,7 @@ def get_function_by_address(address: str) -> str:
     """
     return "\n".join(safe_get("get_function_by_address", {"address": address}))
 
+
 @mcp.tool()
 @recorded_tool
 def get_current_address() -> str:
@@ -219,6 +232,7 @@ def get_current_address() -> str:
     Get the address currently selected by the user.
     """
     return "\n".join(safe_get("get_current_address"))
+
 
 @mcp.tool()
 @recorded_tool
@@ -228,6 +242,7 @@ def get_current_function() -> str:
     """
     return "\n".join(safe_get("get_current_function"))
 
+
 @mcp.tool()
 @recorded_tool
 def get_program_name() -> str:
@@ -235,6 +250,7 @@ def get_program_name() -> str:
     Get the name of the currently loaded program in Ghidra.
     """
     return "\n".join(safe_get("get_program_name"))
+
 
 @mcp.tool()
 @recorded_tool
@@ -244,6 +260,7 @@ def list_functions() -> list:
     """
     return safe_get("list_functions")
 
+
 @mcp.tool()
 @recorded_tool
 def decompile_function_by_address(address: str) -> str:
@@ -251,6 +268,7 @@ def decompile_function_by_address(address: str) -> str:
     Decompile a function at the given address.
     """
     return "\n".join(safe_get("decompile_function", {"address": address}))
+
 
 @mcp.tool()
 @recorded_tool
@@ -260,6 +278,7 @@ def disassemble_function(address: str) -> list:
     """
     return safe_get("disassemble_function", {"address": address})
 
+
 @mcp.tool()
 @recorded_tool
 def set_decompiler_comment(address: str, comment: str) -> str:
@@ -267,6 +286,7 @@ def set_decompiler_comment(address: str, comment: str) -> str:
     Set a comment for a given address in the function pseudocode.
     """
     return safe_post("set_decompiler_comment", {"address": address, "comment": comment})
+
 
 @mcp.tool()
 @recorded_tool
@@ -276,6 +296,7 @@ def set_disassembly_comment(address: str, comment: str) -> str:
     """
     return safe_post("set_disassembly_comment", {"address": address, "comment": comment})
 
+
 @mcp.tool()
 @recorded_tool
 def rename_function_by_address(function_address: str, new_name: str) -> str:
@@ -283,6 +304,7 @@ def rename_function_by_address(function_address: str, new_name: str) -> str:
     Rename a function by its address.
     """
     return safe_post("rename_function_by_address", {"function_address": function_address, "new_name": new_name})
+
 
 @mcp.tool()
 @recorded_tool
@@ -292,13 +314,18 @@ def set_function_prototype(function_address: str, prototype: str) -> str:
     """
     return safe_post("set_function_prototype", {"function_address": function_address, "prototype": prototype})
 
+
 @mcp.tool()
 @recorded_tool
 def set_local_variable_type(function_address: str, variable_name: str, new_type: str) -> str:
     """
     Set a local variable's type.
     """
-    return safe_post("set_local_variable_type", {"function_address": function_address, "variable_name": variable_name, "new_type": new_type})
+    return safe_post(
+        "set_local_variable_type",
+        {"function_address": function_address, "variable_name": variable_name, "new_type": new_type},
+    )
+
 
 @mcp.tool()
 @recorded_tool
@@ -316,6 +343,7 @@ def get_xrefs_to(address: str, offset: int = 0, limit: int = 100) -> list:
     """
     return safe_get("xrefs_to", {"address": address, "offset": offset, "limit": limit})
 
+
 @mcp.tool()
 @recorded_tool
 def get_xrefs_from(address: str, offset: int = 0, limit: int = 100) -> list:
@@ -332,6 +360,7 @@ def get_xrefs_from(address: str, offset: int = 0, limit: int = 100) -> list:
     """
     return safe_get("xrefs_from", {"address": address, "offset": offset, "limit": limit})
 
+
 @mcp.tool()
 @recorded_tool
 def get_function_xrefs(name: str, offset: int = 0, limit: int = 100) -> list:
@@ -347,6 +376,7 @@ def get_function_xrefs(name: str, offset: int = 0, limit: int = 100) -> list:
         List of references to the specified function
     """
     return safe_get("function_xrefs", {"name": name, "offset": offset, "limit": limit})
+
 
 @mcp.tool()
 @recorded_tool
@@ -371,6 +401,7 @@ def list_strings(offset: int = 0, limit: int = 2000, filter: str = None) -> list
 # =============================================================================
 # ENHANCED ANALYSIS TOOLS (Call Graph, Function Management, etc.)
 # =============================================================================
+
 
 @mcp.tool()
 @recorded_tool
@@ -595,11 +626,7 @@ def add_enum_member(enum_name: str, member_name: str, value: int) -> str:
         add_enum_member("ErrorCode", "INVALID_PARAM", -1)
         add_enum_member("Flags", "FLAG_READ", 1)
     """
-    return safe_post("add_enum_member", {
-        "enum_name": enum_name,
-        "member_name": member_name,
-        "value": str(value)
-    })
+    return safe_post("add_enum_member", {"enum_name": enum_name, "member_name": member_name, "value": str(value)})
 
 
 @mcp.tool()
@@ -621,11 +648,7 @@ def set_bookmark(address: str, category: str = "Analysis", comment: str = "") ->
         set_bookmark("0x401000", "Vulnerability", "Potential buffer overflow")
         set_bookmark("0x402000", "Crypto", "AES key derivation")
     """
-    return safe_post("set_bookmark", {
-        "address": address,
-        "category": category,
-        "comment": comment
-    })
+    return safe_post("set_bookmark", {"address": address, "category": category, "comment": comment})
 
 
 @mcp.tool()
@@ -795,6 +818,7 @@ def ghidra_help(topic: str = None) -> str:
 # ENHANCED RENAME & SEMI-AUTONOMOUS RE TOOLS
 # =============================================================================
 
+
 @mcp.tool()
 @recorded_tool
 def rename_variable_by_address(function_address: str, old_name: str, new_name: str) -> str:
@@ -811,11 +835,9 @@ def rename_variable_by_address(function_address: str, old_name: str, new_name: s
     Returns:
         Success or failure message with details
     """
-    return safe_post("rename_variable_by_address", {
-        "function_address": function_address,
-        "old_name": old_name,
-        "new_name": new_name
-    })
+    return safe_post(
+        "rename_variable_by_address", {"function_address": function_address, "old_name": old_name, "new_name": new_name}
+    )
 
 
 @mcp.tool()
@@ -919,6 +941,7 @@ def get_function_cfg_info(address: str) -> str:
 # =============================================================================
 # PATCHING TOOLS (Ghidra)
 # =============================================================================
+
 
 @mcp.tool()
 @recorded_tool
@@ -1049,12 +1072,13 @@ def list_exporters() -> str:
 # DYNAMIC ANALYSIS TOOLS (Docker/GDB)
 # =============================================================================
 
+
 def gdb_request(endpoint: str, method: str = "GET", data: dict[str, Any] | None = None) -> dict[str, Any]:
     """Make a request to the GDB Docker container API."""
     url = urljoin(gdb_server_url, endpoint)
     try:
         response = requests.get(url, timeout=30) if method == "GET" else requests.post(url, json=data, timeout=60)
-        response.encoding = 'utf-8'
+        response.encoding = "utf-8"
         if response.ok:
             return cast(dict[str, Any], response.json())
         else:
@@ -1136,7 +1160,9 @@ def gdb_upload_binary(local_path: str, remote_name: str = None) -> dict:
         # Record manually since we can't use decorator with file upload
         if trajectory_recorder:
             duration_ms = (time.time() - start) * 1000
-            _record_call("gdb_upload_binary", {"local_path": local_path, "remote_name": remote_name}, result, duration_ms)
+            _record_call(
+                "gdb_upload_binary", {"local_path": local_path, "remote_name": remote_name}, result, duration_ms
+            )
         return result
     except Exception as e:
         return {"error": str(e)}
@@ -1166,12 +1192,7 @@ def gdb_run_binary(binary: str, args: list = None, stdin: str = "", timeout: int
         - ppc, ppc64 (PowerPC)
         - riscv64
     """
-    data = {
-        "binary": binary,
-        "args": args or [],
-        "stdin": stdin,
-        "timeout": timeout
-    }
+    data = {"binary": binary, "args": args or [], "stdin": stdin, "timeout": timeout}
     if arch:
         data["arch"] = arch
     return gdb_request("/run", "POST", data)
@@ -1193,10 +1214,7 @@ def gdb_execute(binary: str, commands: list) -> dict:
     Example:
         gdb_execute("myprogram", ["break main", "run", "info registers", "bt"])
     """
-    return gdb_request("/gdb", "POST", {
-        "binary": binary,
-        "commands": commands
-    })
+    return gdb_request("/gdb", "POST", {"binary": binary, "commands": commands})
 
 
 @mcp.tool()
@@ -1213,11 +1231,7 @@ def gdb_breakpoint_run(binary: str, breakpoints: list, stdin: str = "") -> dict:
     Returns:
         Dict with register state, disassembly at PC, and backtrace at each breakpoint
     """
-    return gdb_request("/gdb/breakpoint_run", "POST", {
-        "binary": binary,
-        "breakpoints": breakpoints,
-        "stdin": stdin
-    })
+    return gdb_request("/gdb/breakpoint_run", "POST", {"binary": binary, "breakpoints": breakpoints, "stdin": stdin})
 
 
 @mcp.tool()
@@ -1235,12 +1249,7 @@ def gdb_strace(binary: str, args: list = None, stdin: str = "", timeout: int = 1
     Returns:
         Dict with program output and strace output showing all syscalls
     """
-    return gdb_request("/strace", "POST", {
-        "binary": binary,
-        "args": args or [],
-        "stdin": stdin,
-        "timeout": timeout
-    })
+    return gdb_request("/strace", "POST", {"binary": binary, "args": args or [], "stdin": stdin, "timeout": timeout})
 
 
 @mcp.tool()
@@ -1258,12 +1267,7 @@ def gdb_ltrace(binary: str, args: list = None, stdin: str = "", timeout: int = 1
     Returns:
         Dict with program output and ltrace output showing all library calls
     """
-    return gdb_request("/ltrace", "POST", {
-        "binary": binary,
-        "args": args or [],
-        "stdin": stdin,
-        "timeout": timeout
-    })
+    return gdb_request("/ltrace", "POST", {"binary": binary, "args": args or [], "stdin": stdin, "timeout": timeout})
 
 
 @mcp.tool()
@@ -1298,10 +1302,7 @@ def gdb_disassemble(binary: str, symbol: str = None) -> dict:
     Returns:
         Dict with disassembly in Intel syntax
     """
-    return gdb_request("/disassemble", "POST", {
-        "binary": binary,
-        "symbol": symbol
-    })
+    return gdb_request("/disassemble", "POST", {"binary": binary, "symbol": symbol})
 
 
 @mcp.tool()
@@ -1317,15 +1318,13 @@ def gdb_strings(binary: str, min_length: int = 4) -> dict:
     Returns:
         Dict with list of strings found in the binary
     """
-    return gdb_request("/strings", "POST", {
-        "binary": binary,
-        "min_length": min_length
-    })
+    return gdb_request("/strings", "POST", {"binary": binary, "min_length": min_length})
 
 
 # =============================================================================
 # BINARY ANALYSIS TOOLS (Docker)
 # =============================================================================
+
 
 @mcp.tool()
 @recorded_tool
@@ -1492,11 +1491,7 @@ def gdb_patch_elf(binary: str, address: str, hex_bytes: str, output: str = None)
     Example:
         gdb_patch_elf("myprogram", "0x401234", "EB 05")  # Patch JMP
     """
-    data = {
-        "binary": binary,
-        "address": address,
-        "bytes": hex_bytes
-    }
+    data = {"binary": binary, "address": address, "bytes": hex_bytes}
     if output:
         data["output"] = output
     return gdb_request("/patch_elf", "POST", data)
@@ -1537,6 +1532,7 @@ def gdb_get_telemetry(lines: int = 100) -> dict:
 # ENHANCED DYNAMIC ANALYSIS TOOLS (Registers, Memory, Frida, etc.)
 # =============================================================================
 
+
 @mcp.tool()
 @recorded_tool
 def gdb_read_registers(binary: str, breakpoint: str = "main") -> dict:
@@ -1562,10 +1558,7 @@ def gdb_read_registers(binary: str, breakpoint: str = "main") -> dict:
         gdb_read_registers("crackme", breakpoint="0x401234")
         gdb_read_registers("crackme", breakpoint="check_password")
     """
-    return gdb_request("/gdb/registers", "POST", {
-        "binary": binary,
-        "breakpoint": breakpoint
-    })
+    return gdb_request("/gdb/registers", "POST", {"binary": binary, "breakpoint": breakpoint})
 
 
 @mcp.tool()
@@ -1596,12 +1589,9 @@ def gdb_read_memory(binary: str, address: str, length: int = 64, format: str = "
         gdb_read_memory("crackme", "0x401000", length=64, format="instructions")
         gdb_read_memory("crackme", "$rdi", format="string")
     """
-    return gdb_request("/gdb/memory", "POST", {
-        "binary": binary,
-        "address": address,
-        "length": length,
-        "format": format
-    })
+    return gdb_request(
+        "/gdb/memory", "POST", {"binary": binary, "address": address, "length": length, "format": format}
+    )
 
 
 @mcp.tool()
@@ -1636,12 +1626,9 @@ def gdb_step_execution(binary: str, breakpoint: str = "main", command: str = "st
         gdb_step_execution("crackme", breakpoint="0x401050", command="nexti", count=5)
         gdb_step_execution("crackme", breakpoint="check_password", command="step", count=3)
     """
-    return gdb_request("/gdb/step", "POST", {
-        "binary": binary,
-        "breakpoint": breakpoint,
-        "command": command,
-        "count": count
-    })
+    return gdb_request(
+        "/gdb/step", "POST", {"binary": binary, "breakpoint": breakpoint, "command": command, "count": count}
+    )
 
 
 @mcp.tool()
@@ -1678,11 +1665,7 @@ def gdb_set_watchpoint(binary: str, expression: str, watch_type: str = "write", 
         gdb_set_watchpoint("crackme", "password_buffer", watch_type="write",
                            breakpoints=["main"])
     """
-    data: dict[str, Any] = {
-        "binary": binary,
-        "expression": expression,
-        "watch_type": watch_type
-    }
+    data: dict[str, Any] = {"binary": binary, "expression": expression, "watch_type": watch_type}
     if breakpoints is not None:
         data["breakpoints"] = breakpoints
     return gdb_request("/gdb/watchpoint", "POST", data)
@@ -1716,11 +1699,7 @@ def gdb_inspect_stack(binary: str, breakpoint: str = "main", depth: int = 20) ->
         gdb_inspect_stack("crackme", breakpoint="vulnerable_function", depth=50)
         gdb_inspect_stack("crackme", breakpoint="0x401234", depth=32)
     """
-    return gdb_request("/gdb/stack", "POST", {
-        "binary": binary,
-        "breakpoint": breakpoint,
-        "depth": depth
-    })
+    return gdb_request("/gdb/stack", "POST", {"binary": binary, "breakpoint": breakpoint, "depth": depth})
 
 
 @mcp.tool()
@@ -1778,9 +1757,7 @@ def gdb_got_plt(binary: str) -> dict:
     Example:
         gdb_got_plt("crackme")
     """
-    return gdb_request("/got_plt", "POST", {
-        "binary": binary
-    })
+    return gdb_request("/got_plt", "POST", {"binary": binary})
 
 
 @mcp.tool()
@@ -1811,10 +1788,7 @@ def gdb_rop_gadgets(binary: str, max_depth: int = 5, filter: str = None) -> dict
         gdb_rop_gadgets("crackme", max_depth=8, filter="pop rdi")
         gdb_rop_gadgets("crackme", filter="syscall")
     """
-    data = {
-        "binary": binary,
-        "max_depth": max_depth
-    }
+    data = {"binary": binary, "max_depth": max_depth}
     if filter is not None:
         data["filter"] = filter
     return gdb_request("/rop_gadgets", "POST", data)
@@ -1857,11 +1831,7 @@ def gdb_frida_instrument(binary: str, script: str, timeout: int = 10) -> dict:
                    '  onMatch: function(addr, size) { send("Found at: " + addr); }'
                    '});')
     """
-    return gdb_request("/frida/attach", "POST", {
-        "binary": binary,
-        "script": script,
-        "timeout": timeout
-    })
+    return gdb_request("/frida/attach", "POST", {"binary": binary, "script": script, "timeout": timeout})
 
 
 @mcp.tool()
@@ -1894,11 +1864,7 @@ def gdb_frida_trace(binary: str, functions: list, timeout: int = 10) -> dict:
                         timeout=30)
         gdb_frida_trace("crackme", functions=["libc.so!write", "libc.so!read"])
     """
-    return gdb_request("/frida/trace", "POST", {
-        "binary": binary,
-        "functions": functions,
-        "timeout": timeout
-    })
+    return gdb_request("/frida/trace", "POST", {"binary": binary, "functions": functions, "timeout": timeout})
 
 
 @mcp.tool()
@@ -1939,11 +1905,7 @@ def gdb_frida_hook(binary: str, target: str, on_enter: str = None, on_leave: str
             on_enter='this.size = args[0].toInt32(); send("malloc(" + this.size + ")");',
             on_leave='send("  => " + retval);')
     """
-    data = {
-        "binary": binary,
-        "target": target,
-        "timeout": timeout
-    }
+    data = {"binary": binary, "target": target, "timeout": timeout}
     if on_enter is not None:
         data["on_enter"] = on_enter
     if on_leave is not None:
@@ -1980,10 +1942,7 @@ def gdb_vmmap(binary: str, breakpoint: str = "main") -> dict:
         gdb_vmmap("crackme", breakpoint="0x401234")
         gdb_vmmap("crackme", breakpoint="after_mmap")
     """
-    return gdb_request("/gdb/vmmap", "POST", {
-        "binary": binary,
-        "breakpoint": breakpoint
-    })
+    return gdb_request("/gdb/vmmap", "POST", {"binary": binary, "breakpoint": breakpoint})
 
 
 @mcp.tool()
@@ -2019,17 +1978,17 @@ def gdb_search_pattern(binary: str, pattern: str, breakpoint: str = "main", patt
         gdb_search_pattern("crackme", "0x401000", breakpoint="check_input",
                            pattern_type="pointer")
     """
-    return gdb_request("/gdb/search_pattern", "POST", {
-        "binary": binary,
-        "pattern": pattern,
-        "breakpoint": breakpoint,
-        "pattern_type": pattern_type
-    })
+    return gdb_request(
+        "/gdb/search_pattern",
+        "POST",
+        {"binary": binary, "pattern": pattern, "breakpoint": breakpoint, "pattern_type": pattern_type},
+    )
 
 
 # =============================================================================
 # TRAJECTORY RECORDING TOOLS
 # =============================================================================
+
 
 @mcp.tool()
 def trajectory_start(binary_name: str = None, output_dir: str = None) -> dict:
@@ -2073,7 +2032,7 @@ def trajectory_start(binary_name: str = None, output_dir: str = None) -> dict:
         "session_id": trajectory_recorder.session_id,
         "binary": binary_name,
         "output_path": str(trajectory_recorder.get_session_path()),
-        "note": "All tool calls will now be recorded. Call trajectory_stop() when done."
+        "note": "All tool calls will now be recorded. Call trajectory_stop() when done.",
     }
 
 
@@ -2211,14 +2170,16 @@ def trajectory_list() -> dict:
             # Read first line to get session info
             with open(f) as file:
                 first_line = json.loads(file.readline())
-            trajectories.append({
-                "filename": f.name,
-                "path": str(f),
-                "session_id": first_line.get("session_id"),
-                "binary": first_line.get("binary"),
-                "timestamp": first_line.get("timestamp"),
-                "size_kb": round(f.stat().st_size / 1024, 1),
-            })
+            trajectories.append(
+                {
+                    "filename": f.name,
+                    "path": str(f),
+                    "session_id": first_line.get("session_id"),
+                    "binary": first_line.get("binary"),
+                    "timestamp": first_line.get("timestamp"),
+                    "size_kb": round(f.stat().st_size / 1024, 1),
+                }
+            )
         except Exception:
             trajectories.append({"filename": f.name, "path": str(f), "error": "Could not parse"})
 
@@ -2227,16 +2188,32 @@ def trajectory_list() -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="MCP server for Ghidra + GDB dynamic analysis")
-    parser.add_argument("--ghidra-server", type=str, default=DEFAULT_GHIDRA_SERVER,
-                        help=f"Ghidra server URL, default: {DEFAULT_GHIDRA_SERVER}")
-    parser.add_argument("--gdb-server", type=str, default=DEFAULT_GDB_SERVER,
-                        help=f"GDB Docker container URL, default: {DEFAULT_GDB_SERVER}")
-    parser.add_argument("--mcp-host", type=str, default="127.0.0.1",
-                        help="Host to run MCP server on (only used for sse), default: 127.0.0.1")
-    parser.add_argument("--mcp-port", type=int,
-                        help="Port to run MCP server on (only used for sse), default: 8081")
-    parser.add_argument("--transport", type=str, default="stdio", choices=["stdio", "sse"],
-                        help="Transport protocol for MCP, default: stdio")
+    parser.add_argument(
+        "--ghidra-server",
+        type=str,
+        default=DEFAULT_GHIDRA_SERVER,
+        help=f"Ghidra server URL, default: {DEFAULT_GHIDRA_SERVER}",
+    )
+    parser.add_argument(
+        "--gdb-server",
+        type=str,
+        default=DEFAULT_GDB_SERVER,
+        help=f"GDB Docker container URL, default: {DEFAULT_GDB_SERVER}",
+    )
+    parser.add_argument(
+        "--mcp-host",
+        type=str,
+        default="127.0.0.1",
+        help="Host to run MCP server on (only used for sse), default: 127.0.0.1",
+    )
+    parser.add_argument("--mcp-port", type=int, help="Port to run MCP server on (only used for sse), default: 8081")
+    parser.add_argument(
+        "--transport",
+        type=str,
+        default="stdio",
+        choices=["stdio", "sse"],
+        help="Transport protocol for MCP, default: stdio",
+    )
     args = parser.parse_args()
 
     # Use global variables to ensure they're properly updated
@@ -2275,6 +2252,6 @@ def main():
     else:
         mcp.run()
 
+
 if __name__ == "__main__":
     main()
-

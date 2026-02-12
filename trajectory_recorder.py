@@ -59,17 +59,14 @@ class TrajectoryRecorder:
         "gdb_disassemble": "static_analysis",
         "gdb_strings": "static_analysis",
         "gdb_check_arch": "static_analysis",
-
         # Navigation
         "get_current_address": "navigation",
         "get_current_function": "navigation",
         "get_function_by_address": "navigation",
-
         # Enhanced Analysis
         "get_call_graph": "static_analysis",
         "list_undefined_functions": "static_analysis",
         "get_function_cfg_info": "static_analysis",
-
         # Annotation
         "rename_function": "annotation",
         "rename_function_by_address": "annotation",
@@ -81,27 +78,23 @@ class TrajectoryRecorder:
         "set_local_variable_type": "annotation",
         "rename_variable_by_address": "annotation",
         "batch_rename": "annotation",
-
         # Patching
         "patch_bytes": "patching",
         "patch_instruction": "patching",
         "nop_region": "patching",
         "gdb_patch_elf": "patching",
-
         # Dynamic Analysis
         "gdb_run_binary": "dynamic_analysis",
         "gdb_execute": "dynamic_analysis",
         "gdb_breakpoint_run": "dynamic_analysis",
         "gdb_strace": "dynamic_analysis",
         "gdb_ltrace": "dynamic_analysis",
-
         # File Operations
         "export_binary": "file_ops",
         "save_program": "file_ops",
         "gdb_upload_binary": "file_ops",
         "gdb_list_binaries": "file_ops",
         "list_exporters": "file_ops",
-
         # System
         "gdb_health": "system",
         "gdb_get_logs": "system",
@@ -165,7 +158,8 @@ class TrajectoryRecorder:
         # Check result for addresses (if string)
         if isinstance(result, str):
             import re
-            hex_pattern = r'0x[0-9a-fA-F]+'
+
+            hex_pattern = r"0x[0-9a-fA-F]+"
             found = re.findall(hex_pattern, result)
             addresses.extend(found[:5])  # Limit to first 5
 
@@ -174,7 +168,7 @@ class TrajectoryRecorder:
     def _summarize_result(self, result: Any, tool: str) -> str:
         """Create a brief summary of the result."""
         if isinstance(result, str):
-            lines = result.count('\n') + 1
+            lines = result.count("\n") + 1
             length = len(result)
             if lines > 1:
                 return f"{lines} lines, {length} chars"
@@ -223,35 +217,41 @@ class TrajectoryRecorder:
     def set_binary(self, binary_name: str):
         """Update the current binary being analyzed."""
         self.binary_name = binary_name
-        self._write_entry({
-            "type": "binary_change",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "session_id": self.session_id,
-            "binary": binary_name,
-        })
+        self._write_entry(
+            {
+                "type": "binary_change",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "session_id": self.session_id,
+                "binary": binary_name,
+            }
+        )
 
     def add_note(self, note: str, category: str = "observation"):
         """Add a manual note/observation to the trajectory."""
-        self._write_entry({
-            "type": "note",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "session_id": self.session_id,
-            "binary": self.binary_name,
-            "category": category,
-            "note": note,
-        })
+        self._write_entry(
+            {
+                "type": "note",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "session_id": self.session_id,
+                "binary": self.binary_name,
+                "category": category,
+                "note": note,
+            }
+        )
 
     def end_session(self, summary: str = None):
         """End the recording session."""
         duration = (datetime.now(timezone.utc) - self.start_time).total_seconds()
-        self._write_entry({
-            "type": "session_end",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "session_id": self.session_id,
-            "binary": self.binary_name,
-            "duration_seconds": round(duration, 2),
-            "summary": summary,
-        })
+        self._write_entry(
+            {
+                "type": "session_end",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "session_id": self.session_id,
+                "binary": self.binary_name,
+                "duration_seconds": round(duration, 2),
+                "summary": summary,
+            }
+        )
 
     def get_session_path(self) -> Path:
         """Get the path to the current session file."""
@@ -301,18 +301,22 @@ def analyze_trajectory(trajectory_path: str) -> dict:
             addresses.add(addr)
 
         if category == "patching":
-            patches.append({
-                "tool": tool,
-                "params": entry.get("params"),
-                "result": entry.get("result_summary"),
-            })
+            patches.append(
+                {
+                    "tool": tool,
+                    "params": entry.get("params"),
+                    "result": entry.get("result_summary"),
+                }
+            )
 
         if not entry.get("success", True):
-            errors.append({
-                "tool": tool,
-                "params": entry.get("params"),
-                "result": entry.get("result_summary"),
-            })
+            errors.append(
+                {
+                    "tool": tool,
+                    "params": entry.get("params"),
+                    "result": entry.get("result_summary"),
+                }
+            )
 
     # Session info
     session_start: dict[str, Any] = next((e for e in entries if e.get("type") == "session_start"), {})
@@ -366,13 +370,13 @@ def export_trajectory_markdown(trajectory_path: str, output_path: str = None) ->
     md.append("\n### Tool Usage by Category")
     md.append("| Category | Count |")
     md.append("|----------|-------|")
-    for cat, count in analysis['category_counts'].items():
+    for cat, count in analysis["category_counts"].items():
         md.append(f"| {cat} | {count} |")
 
     # Patches
-    if analysis['patches_applied']:
+    if analysis["patches_applied"]:
         md.append("\n## Patches Applied")
-        for i, patch in enumerate(analysis['patches_applied'], 1):
+        for i, patch in enumerate(analysis["patches_applied"], 1):
             md.append(f"\n### Patch {i}: {patch['tool']}")
             md.append(f"```json\n{json.dumps(patch['params'], indent=2)}\n```")
             md.append(f"Result: {patch['result']}")
@@ -423,6 +427,7 @@ def init_recorder(output_dir: str = None, binary_name: str = None) -> Trajectory
 
 def record_tool_call(func):
     """Decorator to automatically record tool calls."""
+
     @wraps(func)
     def wrapper(*args, **kwargs):
         recorder = get_recorder()

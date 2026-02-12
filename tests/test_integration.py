@@ -48,6 +48,7 @@ def _mock_response(text="", status_code=200, ok=True, json_data=None):
 # Test: Full Binary Triage Workflow
 # ===========================================================================
 
+
 class TestBinaryTriageWorkflow:
     """Test a complete binary triage workflow combining multiple tools."""
 
@@ -116,6 +117,7 @@ class TestBinaryTriageWorkflow:
 # Test: Function Analysis and Annotation Workflow
 # ===========================================================================
 
+
 class TestFunctionAnalysisWorkflow:
     """Test decompile → analyze → rename → comment workflow."""
 
@@ -167,19 +169,20 @@ class TestFunctionAnalysisWorkflow:
             "OK: Renamed variable param_1 → buffer\n"
             "Batch complete: 3 succeeded, 0 failed"
         )
-        ops = json.dumps([
-            {"type": "function", "old_name": "FUN_00401000", "new_name": "xor_decrypt"},
-            {"type": "variable", "function_address": "0x401000", "old_name": "local_8", "new_name": "i"},
-            {"type": "variable", "function_address": "0x401000", "old_name": "param_1", "new_name": "buffer"},
-        ])
+        ops = json.dumps(
+            [
+                {"type": "function", "old_name": "FUN_00401000", "new_name": "xor_decrypt"},
+                {"type": "variable", "function_address": "0x401000", "old_name": "local_8", "new_name": "i"},
+                {"type": "variable", "function_address": "0x401000", "old_name": "param_1", "new_name": "buffer"},
+            ]
+        )
         rename_result = bridge_mcp_ghidra.batch_rename(operations=ops)
         assert "3 succeeded" in rename_result
 
         # Step 5: Add comment
         mock_post.return_value = "Comment set successfully"
         comment_result = bridge_mcp_ghidra.set_decompiler_comment(
-            address="0x401000",
-            comment="XOR decryption with key 0x42. Called from main and process_input."
+            address="0x401000", comment="XOR decryption with key 0x42. Called from main and process_input."
         )
         assert "Comment set" in comment_result
 
@@ -226,6 +229,7 @@ class TestFunctionAnalysisWorkflow:
 # Test: Dynamic Analysis Workflow
 # ===========================================================================
 
+
 class TestDynamicAnalysisWorkflow:
     """Test dynamic analysis tool composition."""
 
@@ -240,9 +244,7 @@ class TestDynamicAnalysisWorkflow:
             "architecture": "x86_64",
             "emulated": False,
         }
-        run_result = bridge_mcp_ghidra.gdb_run_binary(
-            binary="challenge", stdin="wrong_password"
-        )
+        run_result = bridge_mcp_ghidra.gdb_run_binary(binary="challenge", stdin="wrong_password")
         assert run_result["returncode"] == 1
         assert "denied" in run_result["stdout"]
 
@@ -250,17 +252,15 @@ class TestDynamicAnalysisWorkflow:
         mock_gdb.return_value = {
             "stdout": "Enter password: \n",
             "strace_output": (
-                "openat(AT_FDCWD, \"/etc/secret.key\", O_RDONLY) = 3\n"
-                "read(3, \"supersecret\\n\", 4096) = 12\n"
+                'openat(AT_FDCWD, "/etc/secret.key", O_RDONLY) = 3\n'
+                'read(3, "supersecret\\n", 4096) = 12\n'
                 "close(3) = 0\n"
-                "write(1, \"Enter password: \", 16) = 16\n"
-                "read(0, \"wrong_password\\n\", 1024) = 15\n"
+                'write(1, "Enter password: ", 16) = 16\n'
+                'read(0, "wrong_password\\n", 1024) = 15\n'
             ),
             "returncode": 1,
         }
-        strace_result = bridge_mcp_ghidra.gdb_strace(
-            binary="challenge", stdin="wrong_password"
-        )
+        strace_result = bridge_mcp_ghidra.gdb_strace(binary="challenge", stdin="wrong_password")
         assert "/etc/secret.key" in strace_result["strace_output"]
 
         # Step 3: Set breakpoint and inspect state
@@ -288,7 +288,10 @@ class TestDynamicAnalysisWorkflow:
         """Test full security assessment pipeline."""
         # checksec
         mock_gdb.return_value = {
-            "nx": True, "pie": False, "relro": "Partial", "canary": False,
+            "nx": True,
+            "pie": False,
+            "relro": "Partial",
+            "canary": False,
         }
         checksec = bridge_mcp_ghidra.gdb_checksec(binary="vuln")
         assert checksec["canary"] is False  # No canary — stack overflow possible
@@ -302,7 +305,7 @@ class TestDynamicAnalysisWorkflow:
             ],
             "count": 3,
         }
-        if hasattr(bridge_mcp_ghidra, 'gdb_rop_gadgets'):
+        if hasattr(bridge_mcp_ghidra, "gdb_rop_gadgets"):
             gadgets = bridge_mcp_ghidra.gdb_rop_gadgets(binary="vuln", filter="pop rdi")
             assert gadgets["count"] >= 1
 
@@ -314,7 +317,7 @@ class TestDynamicAnalysisWorkflow:
             ],
             "count": 2,
         }
-        if hasattr(bridge_mcp_ghidra, 'gdb_got_plt'):
+        if hasattr(bridge_mcp_ghidra, "gdb_got_plt"):
             got = bridge_mcp_ghidra.gdb_got_plt(binary="vuln")
             assert any(e["name"] == "system" for e in got["got_entries"])
 
@@ -322,6 +325,7 @@ class TestDynamicAnalysisWorkflow:
 # ===========================================================================
 # Test: Patching Workflow
 # ===========================================================================
+
 
 class TestPatchingWorkflow:
     """Test binary patching and export workflow."""
@@ -340,9 +344,7 @@ class TestPatchingWorkflow:
 
         # Step 2: NOP out the conditional jump (bypass check)
         mock_post.return_value = "NOPed 2 bytes from 0x401050 to 0x401051"
-        nop_result = bridge_mcp_ghidra.nop_region(
-            start_address="0x401050", end_address="0x401051"
-        )
+        nop_result = bridge_mcp_ghidra.nop_region(start_address="0x401050", end_address="0x401051")
         assert "NOPed" in nop_result
 
         # Step 3: Verify the patch
@@ -355,9 +357,7 @@ class TestPatchingWorkflow:
 
         # Step 4: Export the patched binary
         mock_post.return_value = "Exported to /tmp/challenge_patched (16384 bytes)"
-        export_result = bridge_mcp_ghidra.export_binary(
-            output_path="/tmp/challenge_patched", format="original"
-        )
+        export_result = bridge_mcp_ghidra.export_binary(output_path="/tmp/challenge_patched", format="original")
         assert "Exported" in export_result
 
     @patch("bridge_mcp_ghidra.safe_post")
@@ -365,22 +365,19 @@ class TestPatchingWorkflow:
         """Test patching specific instructions."""
         # Patch a conditional jump to unconditional
         mock_post.return_value = "Patched instruction at 0x401050: JZ → JMP"
-        result = bridge_mcp_ghidra.patch_instruction(
-            address="0x401050", assembly="JMP 0x401057"
-        )
+        result = bridge_mcp_ghidra.patch_instruction(address="0x401050", assembly="JMP 0x401057")
         assert "Patched" in result
 
         # Patch a return value
         mock_post.return_value = "Patched instruction at 0x401080: XOR EAX, EAX"
-        result = bridge_mcp_ghidra.patch_instruction(
-            address="0x401080", assembly="XOR EAX, EAX"
-        )
+        result = bridge_mcp_ghidra.patch_instruction(address="0x401080", assembly="XOR EAX, EAX")
         assert "Patched" in result
 
 
 # ===========================================================================
 # Test: Trajectory Recording Workflow
 # ===========================================================================
+
 
 class TestTrajectoryWorkflow:
     """Test trajectory recording across a multi-tool session."""
@@ -402,15 +399,12 @@ class TestTrajectoryWorkflow:
 
         # Add a note
         note_result = bridge_mcp_ghidra.trajectory_note(
-            note="Binary uses XOR encryption with key 0x42",
-            category="finding"
+            note="Binary uses XOR encryption with key 0x42", category="finding"
         )
         assert note_result["status"] == "note_added"
 
         # Stop recording
-        stop_result = bridge_mcp_ghidra.trajectory_stop(
-            summary="Identified XOR decryption routine and key"
-        )
+        stop_result = bridge_mcp_ghidra.trajectory_stop(summary="Identified XOR decryption routine and key")
         assert stop_result["status"] == "recording_stopped"
         assert stop_result["session_id"] == session_id
 
@@ -422,6 +416,7 @@ class TestTrajectoryWorkflow:
 # ===========================================================================
 # Test: Error Recovery Workflows
 # ===========================================================================
+
 
 class TestErrorRecovery:
     """Test graceful error handling across workflows."""
@@ -441,9 +436,7 @@ class TestErrorRecovery:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_gdb_server_down(self, mock_gdb):
         """GDB tools should return error dict when Docker is unreachable."""
-        mock_gdb.return_value = {
-            "error": "Cannot connect to GDB server at http://127.0.0.1:5000/."
-        }
+        mock_gdb.return_value = {"error": "Cannot connect to GDB server at http://127.0.0.1:5000/."}
 
         result = bridge_mcp_ghidra.gdb_health()
         assert "error" in result
@@ -455,18 +448,14 @@ class TestErrorRecovery:
     def test_rename_nonexistent_function(self, mock_post):
         """Renaming a nonexistent function should return error."""
         mock_post.return_value = "Error: Function 'nonexistent' not found"
-        result = bridge_mcp_ghidra.rename_function(
-            old_name="nonexistent", new_name="new_name"
-        )
+        result = bridge_mcp_ghidra.rename_function(old_name="nonexistent", new_name="new_name")
         assert "Error" in result
 
     @patch("bridge_mcp_ghidra.safe_post")
     def test_patch_invalid_address(self, mock_post):
         """Patching an invalid address should return error."""
         mock_post.return_value = "Error: Address 0xDEADBEEF is not in any memory block"
-        result = bridge_mcp_ghidra.patch_bytes(
-            address="0xDEADBEEF", hex_bytes="90 90"
-        )
+        result = bridge_mcp_ghidra.patch_bytes(address="0xDEADBEEF", hex_bytes="90 90")
         assert "Error" in result
 
     @patch("bridge_mcp_ghidra.gdb_request")
@@ -499,6 +488,7 @@ class TestErrorRecovery:
 # ===========================================================================
 # Test: Cross-Tool Data Flow
 # ===========================================================================
+
 
 class TestCrossToolDataFlow:
     """Test that data flows correctly between related tools."""
@@ -566,6 +556,7 @@ class TestCrossToolDataFlow:
 # Test: GDB Server Endpoint Validation
 # ===========================================================================
 
+
 class TestGDBServerEndpoints:
     """Validate all GDB tool endpoints are called correctly."""
 
@@ -613,17 +604,22 @@ class TestGDBServerEndpoints:
 
         bridge_mcp_ghidra.gdb_run_binary(binary="test", args=["arg1"])
         # run uses POST
-        mock_gdb.assert_called_with("/run", "POST", {
-            "binary": "test",
-            "args": ["arg1"],
-            "stdin": "",
-            "timeout": 10,
-        })
+        mock_gdb.assert_called_with(
+            "/run",
+            "POST",
+            {
+                "binary": "test",
+                "args": ["arg1"],
+                "stdin": "",
+                "timeout": 10,
+            },
+        )
 
 
 # ===========================================================================
 # Test: Pagination Consistency
 # ===========================================================================
+
 
 class TestPaginationConsistency:
     """Test that pagination works correctly across all list tools."""
@@ -648,14 +644,13 @@ class TestPaginationConsistency:
             tool_func(**params)
             call_args = mock_get.call_args
             for key, value in params.items():
-                assert call_args[0][1][key] == value, (
-                    f"{tool_name}: expected {key}={value}"
-                )
+                assert call_args[0][1][key] == value, f"{tool_name}: expected {key}={value}"
 
 
 # ===========================================================================
 # Test: Bookmark Workflow
 # ===========================================================================
+
 
 class TestBookmarkWorkflow:
     """Test bookmark creation, listing, and deletion."""
@@ -666,14 +661,10 @@ class TestBookmarkWorkflow:
         """Create → list → delete bookmarks."""
         # Create bookmarks
         mock_post.return_value = "Bookmark set at 0x401000 [Vuln]: Buffer overflow"
-        bridge_mcp_ghidra.set_bookmark(
-            address="0x401000", category="Vuln", comment="Buffer overflow"
-        )
+        bridge_mcp_ghidra.set_bookmark(address="0x401000", category="Vuln", comment="Buffer overflow")
 
         mock_post.return_value = "Bookmark set at 0x401200 [Crypto]: AES routine"
-        bridge_mcp_ghidra.set_bookmark(
-            address="0x401200", category="Crypto", comment="AES routine"
-        )
+        bridge_mcp_ghidra.set_bookmark(address="0x401200", category="Crypto", comment="AES routine")
 
         # List all bookmarks
         mock_get.return_value = [

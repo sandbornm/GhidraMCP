@@ -29,6 +29,7 @@ def reset_globals():
 # Tests for Register Tools
 # ===========================================================================
 
+
 class TestRegisterTools:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_read_registers(self, mock_gdb):
@@ -47,10 +48,14 @@ class TestRegisterTools:
         result = bridge_mcp_ghidra.gdb_read_registers(binary="test", breakpoint="main")
         assert "registers" in result
         assert result["registers"]["rip"] == "0x401000"
-        mock_gdb.assert_called_with("/gdb/registers", "POST", {
-            "binary": "test",
-            "breakpoint": "main",
-        })
+        mock_gdb.assert_called_with(
+            "/gdb/registers",
+            "POST",
+            {
+                "binary": "test",
+                "breakpoint": "main",
+            },
+        )
 
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_read_registers_default_breakpoint(self, mock_gdb):
@@ -64,6 +69,7 @@ class TestRegisterTools:
 # Tests for Memory Tools
 # ===========================================================================
 
+
 class TestMemoryTools:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_read_memory_hex(self, mock_gdb):
@@ -73,16 +79,18 @@ class TestMemoryTools:
             "format": "hex",
             "data": "48 89 5c 24 08 48 89 6c 24 10",
         }
-        result = bridge_mcp_ghidra.gdb_read_memory(
-            binary="test", address="0x401000", length=64, format="hex"
-        )
+        result = bridge_mcp_ghidra.gdb_read_memory(binary="test", address="0x401000", length=64, format="hex")
         assert result["format"] == "hex"
-        mock_gdb.assert_called_with("/gdb/memory", "POST", {
-            "binary": "test",
-            "address": "0x401000",
-            "length": 64,
-            "format": "hex",
-        })
+        mock_gdb.assert_called_with(
+            "/gdb/memory",
+            "POST",
+            {
+                "binary": "test",
+                "address": "0x401000",
+                "length": 64,
+                "format": "hex",
+            },
+        )
 
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_read_memory_string(self, mock_gdb):
@@ -90,9 +98,7 @@ class TestMemoryTools:
             "data": "Hello, World!\x00",
             "format": "string",
         }
-        result = bridge_mcp_ghidra.gdb_read_memory(
-            binary="test", address="0x402000", format="string"
-        )
+        result = bridge_mcp_ghidra.gdb_read_memory(binary="test", address="0x402000", format="string")
         assert result["format"] == "string"
 
     @patch("bridge_mcp_ghidra.gdb_request")
@@ -101,15 +107,14 @@ class TestMemoryTools:
             "data": "0x401000: push rbp\n0x401001: mov rbp, rsp",
             "format": "instructions",
         }
-        result = bridge_mcp_ghidra.gdb_read_memory(
-            binary="test", address="0x401000", format="instructions"
-        )
+        result = bridge_mcp_ghidra.gdb_read_memory(binary="test", address="0x401000", format="instructions")
         assert result["format"] == "instructions"
 
 
 # ===========================================================================
 # Tests for Stepping Tools
 # ===========================================================================
+
 
 class TestSteppingTools:
     @patch("bridge_mcp_ghidra.gdb_request")
@@ -119,29 +124,30 @@ class TestSteppingTools:
             "command": "stepi",
             "count": 1,
         }
-        result = bridge_mcp_ghidra.gdb_step_execution(
-            binary="test", breakpoint="main", command="stepi", count=1
-        )
+        result = bridge_mcp_ghidra.gdb_step_execution(binary="test", breakpoint="main", command="stepi", count=1)
         assert result["command"] == "stepi"
-        mock_gdb.assert_called_with("/gdb/step", "POST", {
-            "binary": "test",
-            "breakpoint": "main",
-            "command": "stepi",
-            "count": 1,
-        })
+        mock_gdb.assert_called_with(
+            "/gdb/step",
+            "POST",
+            {
+                "binary": "test",
+                "breakpoint": "main",
+                "command": "stepi",
+                "count": 1,
+            },
+        )
 
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_step_execution_multiple(self, mock_gdb):
         mock_gdb.return_value = {"output": "Stepped 5 times", "count": 5}
-        result = bridge_mcp_ghidra.gdb_step_execution(
-            binary="test", command="nexti", count=5
-        )
+        result = bridge_mcp_ghidra.gdb_step_execution(binary="test", command="nexti", count=5)
         assert result["count"] == 5
 
 
 # ===========================================================================
 # Tests for Watchpoint Tools
 # ===========================================================================
+
 
 class TestWatchpointTools:
     @patch("bridge_mcp_ghidra.gdb_request")
@@ -180,6 +186,7 @@ class TestWatchpointTools:
 # Tests for Stack Inspection
 # ===========================================================================
 
+
 class TestStackInspection:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_inspect_stack(self, mock_gdb):
@@ -188,20 +195,23 @@ class TestStackInspection:
             "stack_memory": "0x7fffffffe380: 0x00000001 0x00000000",
             "frame_info": "Stack frame at 0x7fffffffe380",
         }
-        result = bridge_mcp_ghidra.gdb_inspect_stack(
-            binary="test", breakpoint="main", depth=20
-        )
+        result = bridge_mcp_ghidra.gdb_inspect_stack(binary="test", breakpoint="main", depth=20)
         assert "backtrace" in result
-        mock_gdb.assert_called_with("/gdb/stack", "POST", {
-            "binary": "test",
-            "breakpoint": "main",
-            "depth": 20,
-        })
+        mock_gdb.assert_called_with(
+            "/gdb/stack",
+            "POST",
+            {
+                "binary": "test",
+                "breakpoint": "main",
+                "depth": 20,
+            },
+        )
 
 
 # ===========================================================================
 # Tests for Heap Analysis
 # ===========================================================================
+
 
 class TestHeapAnalysis:
     @patch("bridge_mcp_ghidra.gdb_request")
@@ -225,6 +235,7 @@ class TestHeapAnalysis:
 # ===========================================================================
 # Tests for GOT/PLT
 # ===========================================================================
+
 
 class TestGOTPLT:
     @patch("bridge_mcp_ghidra.gdb_request")
@@ -250,6 +261,7 @@ class TestGOTPLT:
 # Tests for ROP Gadgets
 # ===========================================================================
 
+
 class TestROPGadgets:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_rop_gadgets_basic(self, mock_gdb):
@@ -271,9 +283,7 @@ class TestROPGadgets:
             "gadgets": [{"address": "0x401234", "gadget": "pop rdi; ret"}],
             "count": 1,
         }
-        result = bridge_mcp_ghidra.gdb_rop_gadgets(
-            binary="test", max_depth=3, filter="pop rdi"
-        )
+        result = bridge_mcp_ghidra.gdb_rop_gadgets(binary="test", max_depth=3, filter="pop rdi")
         assert result["count"] == 1
         call_data = mock_gdb.call_args[0][2]
         assert call_data["filter"] == "pop rdi"
@@ -283,6 +293,7 @@ class TestROPGadgets:
 # ===========================================================================
 # Tests for Frida Instrumentation
 # ===========================================================================
+
 
 class TestFridaInstrumentation:
     @patch("bridge_mcp_ghidra.gdb_request")
@@ -298,9 +309,7 @@ class TestFridaInstrumentation:
             }
         });
         """
-        result = bridge_mcp_ghidra.gdb_frida_instrument(
-            binary="test", script=script, timeout=10
-        )
+        result = bridge_mcp_ghidra.gdb_frida_instrument(binary="test", script=script, timeout=10)
         assert "strcmp" in result["output"]
 
     @patch("bridge_mcp_ghidra.gdb_request")
@@ -315,11 +324,15 @@ class TestFridaInstrumentation:
             timeout=10,
         )
         assert "malloc" in result["output"]
-        mock_gdb.assert_called_with("/frida/trace", "POST", {
-            "binary": "test",
-            "functions": ["malloc", "free"],
-            "timeout": 10,
-        })
+        mock_gdb.assert_called_with(
+            "/frida/trace",
+            "POST",
+            {
+                "binary": "test",
+                "functions": ["malloc", "free"],
+                "timeout": 10,
+            },
+        )
 
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_frida_hook(self, mock_gdb):
@@ -340,6 +353,7 @@ class TestFridaInstrumentation:
 # Tests for VMMap
 # ===========================================================================
 
+
 class TestVMMap:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_vmmap(self, mock_gdb):
@@ -359,6 +373,7 @@ class TestVMMap:
 # ===========================================================================
 # Tests for Pattern Search
 # ===========================================================================
+
 
 class TestPatternSearch:
     @patch("bridge_mcp_ghidra.gdb_request")
@@ -397,6 +412,7 @@ class TestPatternSearch:
 # ===========================================================================
 # Tests for Enhanced GDB Tool Endpoint Routing
 # ===========================================================================
+
 
 class TestEnhancedGDBEndpointRouting:
     """Verify all new tools call the correct endpoints."""
@@ -450,13 +466,12 @@ class TestEnhancedGDBEndpointRouting:
 # Tests for Error Handling on New Tools
 # ===========================================================================
 
+
 class TestEnhancedToolErrors:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_new_tools_handle_connection_error(self, mock_gdb):
         """All new tools should handle connection errors gracefully."""
-        mock_gdb.return_value = {
-            "error": "Cannot connect to GDB server at http://127.0.0.1:5000/"
-        }
+        mock_gdb.return_value = {"error": "Cannot connect to GDB server at http://127.0.0.1:5000/"}
 
         # Each tool should return the error dict without crashing
         assert "error" in bridge_mcp_ghidra.gdb_read_registers(binary="t")

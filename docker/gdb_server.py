@@ -21,16 +21,14 @@ LOG_DIR.mkdir(exist_ok=True)
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_DIR / "gdb_server.log"),
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.FileHandler(LOG_DIR / "gdb_server.log"), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
 # Tool call telemetry
 TELEMETRY_FILE = LOG_DIR / "tool_calls.jsonl"
+
 
 def log_tool_call(tool_name: str, params: dict, result: dict, duration_ms: float = None):
     """Log a tool call for telemetry."""
@@ -39,13 +37,14 @@ def log_tool_call(tool_name: str, params: dict, result: dict, duration_ms: float
         "tool": tool_name,
         "params": params,
         "success": "error" not in result,
-        "duration_ms": duration_ms
+        "duration_ms": duration_ms,
     }
     try:
         with open(TELEMETRY_FILE, "a") as f:
             f.write(json.dumps(entry) + "\n")
     except Exception as e:
         logger.error(f"Failed to log telemetry: {e}")
+
 
 app = Flask(__name__)
 
@@ -63,12 +62,14 @@ def health():
         if Path(f"/usr/bin/qemu-{arch}").exists() or Path(f"/usr/bin/qemu-{arch}-static").exists():
             qemu_arches.append(arch)
 
-    return jsonify({
-        "status": "ok",
-        "platform": "linux/amd64",
-        "qemu_architectures": qemu_arches,
-        "note": "Use arch parameter to run non-x86 binaries"
-    })
+    return jsonify(
+        {
+            "status": "ok",
+            "platform": "linux/amd64",
+            "qemu_architectures": qemu_arches,
+            "note": "Use arch parameter to run non-x86 binaries",
+        }
+    )
 
 
 @app.route("/arch", methods=["POST"])
@@ -90,19 +91,22 @@ def check_arch():
     # Get detailed file info
     result = subprocess.run(["file", str(binary_path)], capture_output=True, text=True)
 
-    return jsonify({
-        "binary": str(binary_path),
-        "architecture": arch,
-        "emulator": qemu_cmd,
-        "native": qemu_cmd is None,
-        "file_info": result.stdout.strip()
-    })
+    return jsonify(
+        {
+            "binary": str(binary_path),
+            "architecture": arch,
+            "emulator": qemu_cmd,
+            "native": qemu_cmd is None,
+            "file_info": result.stdout.strip(),
+        }
+    )
 
 
 @app.route("/file_info", methods=["POST"])
 def file_info():
     """Get comprehensive file information about a binary."""
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -125,10 +129,13 @@ def file_info():
     # File size
     stat = binary_path.stat()
     result["size_bytes"] = stat.st_size
-    result["size_human"] = f"{stat.st_size / 1024:.1f} KB" if stat.st_size < 1024*1024 else f"{stat.st_size / (1024*1024):.1f} MB"
+    result["size_human"] = (
+        f"{stat.st_size / 1024:.1f} KB" if stat.st_size < 1024 * 1024 else f"{stat.st_size / (1024 * 1024):.1f} MB"
+    )
 
     # MD5/SHA256 hash
     import hashlib
+
     with open(binary_path, "rb") as f:
         data_bytes = f.read()
         result["md5"] = hashlib.md5(data_bytes).hexdigest()  # noqa: S324
@@ -141,7 +148,7 @@ def file_info():
     result["native_execution"] = qemu is None
 
     # Check if it's an ELF
-    if data_bytes[:4] == b'\x7fELF':
+    if data_bytes[:4] == b"\x7fELF":
         result["format"] = "ELF"
         result["is_elf"] = True
 
@@ -156,7 +163,7 @@ def file_info():
         elf_type = int.from_bytes(data_bytes[16:18], "little" if data_bytes[5] == 1 else "big")
         result["elf_type"] = elf_types.get(elf_type, f"UNKNOWN({elf_type})")
         result["is_pie"] = elf_type == 3  # DYN type = PIE or shared lib
-    elif data_bytes[:2] == b'MZ':
+    elif data_bytes[:2] == b"MZ":
         result["format"] = "PE"
         result["is_elf"] = False
     else:
@@ -173,6 +180,7 @@ def file_info():
 def readelf_info():
     """Get ELF header and program header information."""
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -216,6 +224,7 @@ def readelf_info():
 def get_sections():
     """Get parsed section information from an ELF binary."""
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -239,14 +248,16 @@ def get_sections():
             parts = line.split()
             if len(parts) >= 7:
                 with contextlib.suppress(BaseException):
-                    sections.append({
-                        "index": parts[0].strip("[]"),
-                        "name": parts[1],
-                        "type": parts[2] if len(parts) > 2 else "",
-                        "address": parts[3] if len(parts) > 3 else "",
-                        "offset": parts[4] if len(parts) > 4 else "",
-                        "size": parts[5] if len(parts) > 5 else "",
-                    })
+                    sections.append(
+                        {
+                            "index": parts[0].strip("[]"),
+                            "name": parts[1],
+                            "type": parts[2] if len(parts) > 2 else "",
+                            "address": parts[3] if len(parts) > 3 else "",
+                            "offset": parts[4] if len(parts) > 4 else "",
+                            "size": parts[5] if len(parts) > 5 else "",
+                        }
+                    )
 
     result = {"binary": str(binary_path), "sections": sections, "count": len(sections)}
 
@@ -260,6 +271,7 @@ def get_sections():
 def get_symbols():
     """Get symbol table from a binary."""
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -305,6 +317,7 @@ def analyze_entropy():
     """Analyze entropy of a binary to detect packing/encryption."""
     import math
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -340,7 +353,7 @@ def analyze_entropy():
     # Block-by-block entropy
     blocks = []
     for i in range(0, len(data_bytes), block_size):
-        block = data_bytes[i:i+block_size]
+        block = data_bytes[i : i + block_size]
         blocks.append(calculate_entropy(block))
 
     # Detect likely packing
@@ -359,7 +372,7 @@ def analyze_entropy():
         "total_blocks": len(blocks),
         "high_entropy_ratio": round(high_entropy_ratio, 4),
         "likely_packed": likely_packed,
-        "analysis": "HIGH - likely packed/encrypted" if likely_packed else "NORMAL - likely not packed"
+        "analysis": "HIGH - likely packed/encrypted" if likely_packed else "NORMAL - likely not packed",
     }
 
     duration = (time.time() - start) * 1000
@@ -372,6 +385,7 @@ def analyze_entropy():
 def binwalk_analyze():
     """Run binwalk to detect embedded files and signatures."""
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -400,17 +414,13 @@ def binwalk_analyze():
             parts = line.split(None, 2)
             if len(parts) >= 3:
                 with contextlib.suppress(BaseException):
-                    signatures.append({
-                        "offset_dec": int(parts[0]),
-                        "offset_hex": parts[1],
-                        "description": parts[2]
-                    })
+                    signatures.append({"offset_dec": int(parts[0]), "offset_hex": parts[1], "description": parts[2]})
 
     result = {
         "binary": str(binary_path),
         "signatures": signatures,
         "count": len(signatures),
-        "raw_output": cmd_result.stdout
+        "raw_output": cmd_result.stdout,
     }
 
     duration = (time.time() - start) * 1000
@@ -423,6 +433,7 @@ def binwalk_analyze():
 def hexdump():
     """Get hex dump of a binary at a specific offset."""
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -448,10 +459,10 @@ def hexdump():
     # Format hex dump
     lines = []
     for i in range(0, len(data_bytes), 16):
-        chunk = data_bytes[i:i+16]
+        chunk = data_bytes[i : i + 16]
         hex_part = " ".join(f"{b:02x}" for b in chunk)
         ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
-        lines.append(f"{offset+i:08x}  {hex_part:<48}  |{ascii_part}|")
+        lines.append(f"{offset + i:08x}  {hex_part:<48}  |{ascii_part}|")
 
     result = {
         "binary": str(binary_path),
@@ -462,7 +473,9 @@ def hexdump():
     }
 
     duration = (time.time() - start) * 1000
-    log_tool_call("hexdump", {"binary": binary, "offset": offset, "length": length}, {"bytes_read": len(data_bytes)}, duration)
+    log_tool_call(
+        "hexdump", {"binary": binary, "offset": offset, "length": length}, {"bytes_read": len(data_bytes)}, duration
+    )
 
     return jsonify(result)
 
@@ -471,6 +484,7 @@ def hexdump():
 def get_imports():
     """Get imported functions from a binary."""
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -485,10 +499,7 @@ def get_imports():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
 
     # Use objdump to get dynamic relocations
-    cmd_result = subprocess.run(
-        ["objdump", "-T", str(binary_path)],
-        capture_output=True, text=True
-    )
+    cmd_result = subprocess.run(["objdump", "-T", str(binary_path)], capture_output=True, text=True)
 
     imports = []
     for line in cmd_result.stdout.split("\n"):
@@ -498,11 +509,7 @@ def get_imports():
                 name = parts[-1]
                 imports.append({"name": name, "type": "function"})
 
-    result = {
-        "binary": str(binary_path),
-        "imports": imports,
-        "count": len(imports)
-    }
+    result = {"binary": str(binary_path), "imports": imports, "count": len(imports)}
 
     duration = (time.time() - start) * 1000
     log_tool_call("imports", {"binary": binary}, {"count": len(imports)}, duration)
@@ -514,6 +521,7 @@ def get_imports():
 def get_libraries():
     """Get shared libraries required by a binary."""
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -528,23 +536,16 @@ def get_libraries():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
 
     # Use ldd or readelf to get libraries
-    cmd_result = subprocess.run(
-        ["readelf", "-d", str(binary_path)],
-        capture_output=True, text=True
-    )
+    cmd_result = subprocess.run(["readelf", "-d", str(binary_path)], capture_output=True, text=True)
 
     libraries = []
     for line in cmd_result.stdout.split("\n"):
         # Extract library name from: 0x0000000000000001 (NEEDED) Shared library: [libc.so.6]
         if "NEEDED" in line and "[" in line and "]" in line:
-            lib = line[line.index("[") + 1:line.index("]")]
+            lib = line[line.index("[") + 1 : line.index("]")]
             libraries.append(lib)
 
-    result = {
-        "binary": str(binary_path),
-        "libraries": libraries,
-        "count": len(libraries)
-    }
+    result = {"binary": str(binary_path), "libraries": libraries, "count": len(libraries)}
 
     duration = (time.time() - start) * 1000
     log_tool_call("libs", {"binary": binary}, {"count": len(libraries)}, duration)
@@ -571,11 +572,7 @@ def upload_binary():
     # Get file info
     result = subprocess.run(["file", str(filepath)], capture_output=True, text=True)
 
-    return jsonify({
-        "status": "uploaded",
-        "path": str(filepath),
-        "info": result.stdout.strip()
-    })
+    return jsonify({"status": "uploaded", "path": str(filepath), "info": result.stdout.strip()})
 
 
 @app.route("/list_bins", methods=["GET"])
@@ -585,11 +582,7 @@ def list_bins():
     for f in BINS_DIR.iterdir():
         if f.is_file():
             result = subprocess.run(["file", str(f)], capture_output=True, text=True)
-            bins.append({
-                "name": f.name,
-                "path": str(f),
-                "info": result.stdout.strip()
-            })
+            bins.append({"name": f.name, "path": str(f), "info": result.stdout.strip()})
     return jsonify({"binaries": bins})
 
 
@@ -652,20 +645,16 @@ def run_binary():
         cmd = [str(binary_path)] + args
 
     try:
-        result = subprocess.run(
-            cmd,
-            input=stdin_input,
-            capture_output=True,
-            text=True,
-            timeout=timeout
+        result = subprocess.run(cmd, input=stdin_input, capture_output=True, text=True, timeout=timeout)
+        return jsonify(
+            {
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "returncode": result.returncode,
+                "architecture": arch,
+                "emulated": qemu_cmd is not None,
+            }
         )
-        return jsonify({
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "returncode": result.returncode,
-            "architecture": arch,
-            "emulated": qemu_cmd is not None
-        })
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Timeout expired", "timeout": timeout, "architecture": arch})
     except Exception as e:
@@ -691,12 +680,7 @@ def gdb_command():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
 
     # Build GDB command file
-    gdb_script = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        *commands,
-        "quit"
-    ])
+    gdb_script = "\n".join(["set pagination off", "set confirm off", *commands, "quit"])
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".gdb", delete=False) as f:
         f.write(gdb_script)
@@ -704,15 +688,9 @@ def gdb_command():
 
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-x", script_path, str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=30
+            ["gdb", "-batch", "-x", script_path, str(binary_path)], capture_output=True, text=True, timeout=30
         )
-        return jsonify({
-            "output": result.stdout + result.stderr,
-            "returncode": result.returncode
-        })
+        return jsonify({"output": result.stdout + result.stderr, "returncode": result.returncode})
     except subprocess.TimeoutExpired:
         return jsonify({"error": "GDB timeout"})
     except Exception as e:
@@ -745,14 +723,16 @@ def gdb_breakpoint_run():
     for bp in breakpoints:
         commands.append(f"break *{bp}" if bp.startswith("0x") else f"break {bp}")
 
-    commands.extend([
-        "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
-        "info registers",
-        "x/20i $pc",
-        "bt",
-        "continue",
-        "quit"
-    ])
+    commands.extend(
+        [
+            "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
+            "info registers",
+            "x/20i $pc",
+            "bt",
+            "continue",
+            "quit",
+        ]
+    )
 
     gdb_script = "\n".join(commands)
 
@@ -762,15 +742,9 @@ def gdb_breakpoint_run():
 
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-x", script_path, str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=30
+            ["gdb", "-batch", "-x", script_path, str(binary_path)], capture_output=True, text=True, timeout=30
         )
-        return jsonify({
-            "output": result.stdout + result.stderr,
-            "returncode": result.returncode
-        })
+        return jsonify({"output": result.stdout + result.stderr, "returncode": result.returncode})
     except Exception as e:
         return jsonify({"error": str(e)})
     finally:
@@ -800,13 +774,15 @@ def strace_binary():
             input=stdin_input,
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
         )
-        return jsonify({
-            "stdout": result.stdout,
-            "strace_output": result.stderr,  # strace outputs to stderr
-            "returncode": result.returncode
-        })
+        return jsonify(
+            {
+                "stdout": result.stdout,
+                "strace_output": result.stderr,  # strace outputs to stderr
+                "returncode": result.returncode,
+            }
+        )
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Timeout expired"})
     except Exception as e:
@@ -836,13 +812,15 @@ def ltrace_binary():
             input=stdin_input,
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
         )
-        return jsonify({
-            "stdout": result.stdout,
-            "ltrace_output": result.stderr,  # ltrace outputs to stderr
-            "returncode": result.returncode
-        })
+        return jsonify(
+            {
+                "stdout": result.stdout,
+                "ltrace_output": result.stderr,  # ltrace outputs to stderr
+                "returncode": result.returncode,
+            }
+        )
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Timeout expired"})
     except Exception as e:
@@ -913,10 +891,7 @@ def get_strings():
 
     try:
         result = subprocess.run(
-            ["strings", f"-n{min_len}", str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=10
+            ["strings", f"-n{min_len}", str(binary_path)], capture_output=True, text=True, timeout=10
         )
         return jsonify({"strings": result.stdout.splitlines()})
     except Exception as e:
@@ -940,44 +915,34 @@ def checksec():
     # Use readelf to check security features
     try:
         # Check for NX (non-executable stack)
-        result = subprocess.run(
-            ["readelf", "-l", str(binary_path)],
-            capture_output=True, text=True
-        )
+        result = subprocess.run(["readelf", "-l", str(binary_path)], capture_output=True, text=True)
         nx_enabled = "GNU_STACK" in result.stdout and "RWE" not in result.stdout
 
         # Check for PIE
-        result_type = subprocess.run(
-            ["file", str(binary_path)],
-            capture_output=True, text=True
-        )
+        result_type = subprocess.run(["file", str(binary_path)], capture_output=True, text=True)
         pie_enabled = "pie executable" in result_type.stdout.lower() or "shared object" in result_type.stdout.lower()
 
         # Check for RELRO
         relro = "None"
         if "GNU_RELRO" in result.stdout:
             # Check for full RELRO (BIND_NOW)
-            result_dyn = subprocess.run(
-                ["readelf", "-d", str(binary_path)],
-                capture_output=True, text=True
-            )
+            result_dyn = subprocess.run(["readelf", "-d", str(binary_path)], capture_output=True, text=True)
             relro = "Full" if "BIND_NOW" in result_dyn.stdout else "Partial"
 
         # Check for canary (stack protector)
-        result_syms = subprocess.run(
-            ["readelf", "-s", str(binary_path)],
-            capture_output=True, text=True
-        )
+        result_syms = subprocess.run(["readelf", "-s", str(binary_path)], capture_output=True, text=True)
         canary = "__stack_chk_fail" in result_syms.stdout
 
-        return jsonify({
-            "binary": str(binary_path),
-            "nx": nx_enabled,
-            "pie": pie_enabled,
-            "relro": relro,
-            "canary": canary,
-            "file_info": result_type.stdout.strip()
-        })
+        return jsonify(
+            {
+                "binary": str(binary_path),
+                "nx": nx_enabled,
+                "pie": pie_enabled,
+                "relro": relro,
+                "canary": canary,
+                "file_info": result_type.stdout.strip(),
+            }
+        )
     except Exception as e:
         return jsonify({"error": str(e)})
 
@@ -1023,6 +988,7 @@ def patch_elf():
     This calculates the file offset and patches the original file.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -1054,10 +1020,7 @@ def patch_elf():
         patch_bytes = bytes.fromhex(hex_bytes)
 
         # Use readelf to find the file offset for this virtual address
-        result = subprocess.run(
-            ["readelf", "-l", str(binary_path)],
-            capture_output=True, text=True
-        )
+        result = subprocess.run(["readelf", "-l", str(binary_path)], capture_output=True, text=True)
 
         # Parse program headers to find the segment containing our address
         file_offset = None
@@ -1091,6 +1054,7 @@ def patch_elf():
 
         # Copy original file
         import shutil
+
         shutil.copy2(binary_path, output_path)
 
         # Read original bytes for logging
@@ -1114,7 +1078,7 @@ def patch_elf():
             "file_offset": hex(file_offset),
             "original_bytes": original_bytes.hex(),
             "new_bytes": patch_bytes.hex(),
-            "size": len(patch_bytes)
+            "size": len(patch_bytes),
         }
 
         logger.info(f"Successfully patched {output_path} at offset {hex(file_offset)}")
@@ -1141,6 +1105,7 @@ def gdb_registers():
     and returns a parsed register dictionary.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -1157,16 +1122,18 @@ def gdb_registers():
 
     # Build GDB script to break and dump registers
     bp_cmd = f"break *{breakpoint}" if breakpoint.startswith("0x") else f"break {breakpoint}"
-    gdb_script = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        bp_cmd,
-        "run",
-        "info registers",
-        "echo ===ALL_REGISTERS_SEPARATOR===\\n",
-        "info registers all",
-        "quit"
-    ])
+    gdb_script = "\n".join(
+        [
+            "set pagination off",
+            "set confirm off",
+            bp_cmd,
+            "run",
+            "info registers",
+            "echo ===ALL_REGISTERS_SEPARATOR===\\n",
+            "info registers all",
+            "quit",
+        ]
+    )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".gdb", delete=False) as f:
         f.write(gdb_script)
@@ -1174,10 +1141,7 @@ def gdb_registers():
 
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-x", script_path, str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=30
+            ["gdb", "-batch", "-x", script_path, str(binary_path)], capture_output=True, text=True, timeout=30
         )
 
         raw_output = result.stdout + result.stderr
@@ -1221,9 +1185,11 @@ def gdb_registers():
             "registers": registers,
             "general_registers": general_regs,
             "register_count": len(registers),
-            "raw_output": raw_output
+            "raw_output": raw_output,
         }
-        log_tool_call("gdb_registers", {"binary": binary, "breakpoint": breakpoint}, {"count": len(registers)}, duration)
+        log_tool_call(
+            "gdb_registers", {"binary": binary, "breakpoint": breakpoint}, {"count": len(registers)}, duration
+        )
 
         return jsonify(result_data)
 
@@ -1247,6 +1213,7 @@ def gdb_memory():
     Supports hex, string, and instruction formats.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -1290,14 +1257,7 @@ def gdb_memory():
         examine_cmd = f"x/{length}{gdb_fmt}b {address}"
 
     bp_cmd = f"break *{breakpoint}" if breakpoint.startswith("0x") else f"break {breakpoint}"
-    gdb_script = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        bp_cmd,
-        "run",
-        examine_cmd,
-        "quit"
-    ])
+    gdb_script = "\n".join(["set pagination off", "set confirm off", bp_cmd, "run", examine_cmd, "quit"])
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".gdb", delete=False) as f:
         f.write(gdb_script)
@@ -1305,10 +1265,7 @@ def gdb_memory():
 
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-x", script_path, str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=30
+            ["gdb", "-batch", "-x", script_path, str(binary_path)], capture_output=True, text=True, timeout=30
         )
 
         raw_output = result.stdout + result.stderr
@@ -1328,9 +1285,14 @@ def gdb_memory():
             "length": length,
             "format": fmt,
             "memory": memory_lines,
-            "raw_output": raw_output
+            "raw_output": raw_output,
         }
-        log_tool_call("gdb_memory", {"binary": binary, "address": address, "length": length, "format": fmt}, {"lines": len(memory_lines)}, duration)
+        log_tool_call(
+            "gdb_memory",
+            {"binary": binary, "address": address, "length": length, "format": fmt},
+            {"lines": len(memory_lines)},
+            duration,
+        )
 
         return jsonify(result_data)
 
@@ -1354,6 +1316,7 @@ def gdb_step():
     Returns register state and disassembly after stepping.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -1389,17 +1352,19 @@ def gdb_step():
         step_commands.append("info registers")
         step_commands.append("x/3i $pc")
 
-    gdb_script = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        bp_cmd,
-        "run",
-        "echo ===INITIAL_STATE===\\n",
-        "info registers",
-        "x/5i $pc",
-        *step_commands,
-        "quit"
-    ])
+    gdb_script = "\n".join(
+        [
+            "set pagination off",
+            "set confirm off",
+            bp_cmd,
+            "run",
+            "echo ===INITIAL_STATE===\\n",
+            "info registers",
+            "x/5i $pc",
+            *step_commands,
+            "quit",
+        ]
+    )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".gdb", delete=False) as f:
         f.write(gdb_script)
@@ -1407,10 +1372,7 @@ def gdb_step():
 
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-x", script_path, str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=60
+            ["gdb", "-batch", "-x", script_path, str(binary_path)], capture_output=True, text=True, timeout=60
         )
 
         raw_output = result.stdout + result.stderr
@@ -1423,7 +1385,7 @@ def gdb_step():
             if step_num_end == -1:
                 continue
             step_num = part[:step_num_end]
-            step_content = part[step_num_end + 3:]
+            step_content = part[step_num_end + 3 :]
 
             # Parse register values from this step
             regs = {}
@@ -1440,11 +1402,13 @@ def gdb_step():
                     if len(tokens) >= 2 and (tokens[0].isalnum() or tokens[0].startswith("$")):
                         regs[tokens[0]] = tokens[1]
 
-            steps.append({
-                "step": int(step_num) if step_num.isdigit() else step_num,
-                "registers": regs,
-                "disassembly": disasm_lines
-            })
+            steps.append(
+                {
+                    "step": int(step_num) if step_num.isdigit() else step_num,
+                    "registers": regs,
+                    "disassembly": disasm_lines,
+                }
+            )
 
         # Extract initial state
         initial_state = ""
@@ -1464,9 +1428,14 @@ def gdb_step():
             "steps": steps,
             "total_steps_executed": len(steps),
             "initial_state": initial_state,
-            "raw_output": raw_output
+            "raw_output": raw_output,
         }
-        log_tool_call("gdb_step", {"binary": binary, "breakpoint": breakpoint, "command": command, "count": count}, {"steps": len(steps)}, duration)
+        log_tool_call(
+            "gdb_step",
+            {"binary": binary, "breakpoint": breakpoint, "command": command, "count": count},
+            {"steps": len(steps)},
+            duration,
+        )
 
         return jsonify(result_data)
 
@@ -1491,6 +1460,7 @@ def gdb_watchpoint():
     Returns the program state when the watchpoint fires.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -1526,23 +1496,25 @@ def gdb_watchpoint():
     for bp in breakpoints:
         bp_cmds.append(f"break *{bp}" if bp.startswith("0x") else f"break {bp}")
 
-    gdb_script = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        *bp_cmds,
-        "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
-        f"{wp_cmd} {expression}",
-        "continue",
-        "echo ===WATCHPOINT_HIT===\\n",
-        "info registers",
-        "echo ===BACKTRACE===\\n",
-        "bt",
-        "echo ===DISASSEMBLY===\\n",
-        "x/10i $pc",
-        "echo ===WATCH_VALUE===\\n",
-        f"print {expression}",
-        "quit"
-    ])
+    gdb_script = "\n".join(
+        [
+            "set pagination off",
+            "set confirm off",
+            *bp_cmds,
+            "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
+            f"{wp_cmd} {expression}",
+            "continue",
+            "echo ===WATCHPOINT_HIT===\\n",
+            "info registers",
+            "echo ===BACKTRACE===\\n",
+            "bt",
+            "echo ===DISASSEMBLY===\\n",
+            "x/10i $pc",
+            "echo ===WATCH_VALUE===\\n",
+            f"print {expression}",
+            "quit",
+        ]
+    )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".gdb", delete=False) as f:
         f.write(gdb_script)
@@ -1550,10 +1522,7 @@ def gdb_watchpoint():
 
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-x", script_path, str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=30
+            ["gdb", "-batch", "-x", script_path, str(binary_path)], capture_output=True, text=True, timeout=30
         )
 
         raw_output = result.stdout + result.stderr
@@ -1599,9 +1568,14 @@ def gdb_watchpoint():
             "backtrace": backtrace,
             "disassembly": disassembly,
             "watch_value": watch_value,
-            "raw_output": raw_output
+            "raw_output": raw_output,
         }
-        log_tool_call("gdb_watchpoint", {"binary": binary, "expression": expression, "type": wp_type}, {"triggered": watchpoint_hit}, duration)
+        log_tool_call(
+            "gdb_watchpoint",
+            {"binary": binary, "expression": expression, "type": wp_type},
+            {"triggered": watchpoint_hit},
+            duration,
+        )
 
         return jsonify(result_data)
 
@@ -1625,6 +1599,7 @@ def gdb_stack():
     Returns backtrace, stack memory dump, and frame info.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -1645,25 +1620,27 @@ def gdb_stack():
     depth = max(1, min(depth, 100))
 
     bp_cmd = f"break *{breakpoint}" if breakpoint.startswith("0x") else f"break {breakpoint}"
-    gdb_script = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        bp_cmd,
-        "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
-        "echo ===BACKTRACE===\\n",
-        f"bt {depth}",
-        "echo ===FRAME_INFO===\\n",
-        "info frame",
-        "echo ===LOCALS===\\n",
-        "info locals",
-        "echo ===ARGS===\\n",
-        "info args",
-        "echo ===STACK_MEMORY===\\n",
-        "x/32gx $sp",
-        "echo ===REGISTERS===\\n",
-        "info registers rsp rbp rip",
-        "quit"
-    ])
+    gdb_script = "\n".join(
+        [
+            "set pagination off",
+            "set confirm off",
+            bp_cmd,
+            "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
+            "echo ===BACKTRACE===\\n",
+            f"bt {depth}",
+            "echo ===FRAME_INFO===\\n",
+            "info frame",
+            "echo ===LOCALS===\\n",
+            "info locals",
+            "echo ===ARGS===\\n",
+            "info args",
+            "echo ===STACK_MEMORY===\\n",
+            "x/32gx $sp",
+            "echo ===REGISTERS===\\n",
+            "info registers rsp rbp rip",
+            "quit",
+        ]
+    )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".gdb", delete=False) as f:
         f.write(gdb_script)
@@ -1671,10 +1648,7 @@ def gdb_stack():
 
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-x", script_path, str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=30
+            ["gdb", "-batch", "-x", script_path, str(binary_path)], capture_output=True, text=True, timeout=30
         )
 
         raw_output = result.stdout + result.stderr
@@ -1721,9 +1695,11 @@ def gdb_stack():
             "args": args_info,
             "stack_memory": stack_entries,
             "registers": registers,
-            "raw_output": raw_output
+            "raw_output": raw_output,
         }
-        log_tool_call("gdb_stack", {"binary": binary, "breakpoint": breakpoint, "depth": depth}, {"frames": len(frames)}, duration)
+        log_tool_call(
+            "gdb_stack", {"binary": binary, "breakpoint": breakpoint, "depth": depth}, {"frames": len(frames)}, duration
+        )
 
         return jsonify(result_data)
 
@@ -1747,6 +1723,7 @@ def gdb_heap():
     Runs GEF's heap chunks and heap bins commands to inspect heap state.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -1765,36 +1742,40 @@ def gdb_heap():
     bp_cmd = f"break *{breakpoint}" if breakpoint.startswith("0x") else f"break {breakpoint}"
 
     # Try GEF commands first; fall back to manual heap inspection
-    gdb_script = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        bp_cmd,
-        "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
-        "echo ===HEAP_CHUNKS===\\n",
-        "heap chunks",
-        "echo ===HEAP_BINS===\\n",
-        "heap bins",
-        "echo ===HEAP_ARENA===\\n",
-        "heap arenas",
-        "echo ===MALLOC_INFO===\\n",
-        "info proc mappings",
-        "quit"
-    ])
+    gdb_script = "\n".join(
+        [
+            "set pagination off",
+            "set confirm off",
+            bp_cmd,
+            "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
+            "echo ===HEAP_CHUNKS===\\n",
+            "heap chunks",
+            "echo ===HEAP_BINS===\\n",
+            "heap bins",
+            "echo ===HEAP_ARENA===\\n",
+            "heap arenas",
+            "echo ===MALLOC_INFO===\\n",
+            "info proc mappings",
+            "quit",
+        ]
+    )
 
     # Fallback script without GEF commands
-    gdb_script_fallback = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        bp_cmd,
-        "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
-        "echo ===HEAP_INFO===\\n",
-        "info proc mappings",
-        "echo ===MALLOC_STATE===\\n",
-        "print (int)mallinfo()",
-        "echo ===HEAP_MEMORY===\\n",
-        "x/64gx &__malloc_hook",
-        "quit"
-    ])
+    gdb_script_fallback = "\n".join(
+        [
+            "set pagination off",
+            "set confirm off",
+            bp_cmd,
+            "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
+            "echo ===HEAP_INFO===\\n",
+            "info proc mappings",
+            "echo ===MALLOC_STATE===\\n",
+            "print (int)mallinfo()",
+            "echo ===HEAP_MEMORY===\\n",
+            "x/64gx &__malloc_hook",
+            "quit",
+        ]
+    )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".gdb", delete=False) as f:
         f.write(gdb_script)
@@ -1803,10 +1784,7 @@ def gdb_heap():
     fallback_path = None
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-x", script_path, str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=30
+            ["gdb", "-batch", "-x", script_path, str(binary_path)], capture_output=True, text=True, timeout=30
         )
 
         raw_output = result.stdout + result.stderr
@@ -1820,10 +1798,7 @@ def gdb_heap():
                 fallback_path = f.name
 
             result = subprocess.run(
-                ["gdb", "-batch", "-x", fallback_path, str(binary_path)],
-                capture_output=True,
-                text=True,
-                timeout=30
+                ["gdb", "-batch", "-x", fallback_path, str(binary_path)], capture_output=True, text=True, timeout=30
             )
             raw_output = result.stdout + result.stderr
 
@@ -1858,7 +1833,7 @@ def gdb_heap():
                 "heap_bins": heap_bins,
                 "heap_arena": heap_arena,
                 "malloc_info": malloc_info,
-                "raw_output": raw_output
+                "raw_output": raw_output,
             }
         else:
             heap_info = extract_section(raw_output, "===HEAP_INFO===", "===MALLOC_STATE===")
@@ -1873,7 +1848,7 @@ def gdb_heap():
                 "malloc_state": malloc_state,
                 "heap_memory": heap_memory,
                 "note": "GEF not available; showing basic heap info from /proc mappings",
-                "raw_output": raw_output
+                "raw_output": raw_output,
             }
 
         duration = (time.time() - start) * 1000
@@ -1903,6 +1878,7 @@ def got_plt():
     Uses objdump and readelf to parse entries with names and addresses.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -1918,10 +1894,7 @@ def got_plt():
 
     try:
         # Get GOT entries via readelf relocations
-        reloc_result = subprocess.run(
-            ["readelf", "-r", str(binary_path)],
-            capture_output=True, text=True, timeout=10
-        )
+        reloc_result = subprocess.run(["readelf", "-r", str(binary_path)], capture_output=True, text=True, timeout=10)
 
         got_entries = []
         for line in reloc_result.stdout.split("\n"):
@@ -1941,18 +1914,22 @@ def got_plt():
                             break
 
                     if "PLT" in reloc_type or "JUMP_SLO" in reloc_type or "GLOB_DAT" in reloc_type:
-                        got_entries.append({
-                            "address": f"0x{offset}" if not offset.startswith("0x") else offset,
-                            "type": reloc_type,
-                            "name": sym_name
-                        })
+                        got_entries.append(
+                            {
+                                "address": f"0x{offset}" if not offset.startswith("0x") else offset,
+                                "type": reloc_type,
+                                "name": sym_name,
+                            }
+                        )
                 except (ValueError, IndexError):
                     continue
 
         # Get PLT entries via objdump
         plt_result = subprocess.run(
             ["objdump", "-d", "-j", ".plt", "-j", ".plt.got", "-j", ".plt.sec", "-M", "intel", str(binary_path)],
-            capture_output=True, text=True, timeout=10
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
 
         plt_entries = []
@@ -1971,7 +1948,7 @@ def got_plt():
                     current_entry = {
                         "address": f"0x{addr}" if not addr.startswith("0x") else addr,
                         "name": name,
-                        "instructions": []
+                        "instructions": [],
                     }
                     plt_entries.append(current_entry)
             elif current_entry and line.strip() and ":" in line and line.strip()[0].isdigit():
@@ -1979,8 +1956,7 @@ def got_plt():
 
         # Get section addresses for .got and .plt
         sections_result = subprocess.run(
-            ["readelf", "-S", "-W", str(binary_path)],
-            capture_output=True, text=True, timeout=10
+            ["readelf", "-S", "-W", str(binary_path)], capture_output=True, text=True, timeout=10
         )
 
         section_info = {}
@@ -1992,8 +1968,8 @@ def got_plt():
                         if p == sec_name and i + 2 < len(parts):
                             with contextlib.suppress(IndexError):
                                 section_info[sec_name] = {
-                                    "address": f"0x{parts[i+2]}",
-                                    "size": f"0x{parts[i+4]}" if i + 4 < len(parts) else "unknown"
+                                    "address": f"0x{parts[i + 2]}",
+                                    "size": f"0x{parts[i + 4]}" if i + 4 < len(parts) else "unknown",
                                 }
 
         duration = (time.time() - start) * 1000
@@ -2004,7 +1980,7 @@ def got_plt():
             "plt_entries": plt_entries,
             "plt_count": len(plt_entries),
             "sections": section_info,
-            "raw_relocations": reloc_result.stdout
+            "raw_relocations": reloc_result.stdout,
         }
         log_tool_call("got_plt", {"binary": binary}, {"got": len(got_entries), "plt": len(plt_entries)}, duration)
 
@@ -2028,6 +2004,7 @@ def rop_gadgets():
     Returns a list of gadgets with addresses and instructions.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -2055,12 +2032,7 @@ def rop_gadgets():
         if gadget_filter:
             cmd.extend(["--only", gadget_filter])
 
-        rop_result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
+        rop_result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
         if rop_result.returncode == 0 and rop_result.stdout.strip():
             tool_used = "ROPgadget"
@@ -2071,10 +2043,7 @@ def rop_gadgets():
                     parts = line.split(" : ", 1)
                     addr = parts[0].strip()
                     instructions = parts[1].strip() if len(parts) > 1 else ""
-                    gadgets.append({
-                        "address": addr,
-                        "instructions": instructions
-                    })
+                    gadgets.append({"address": addr, "instructions": instructions})
         else:
             raise FileNotFoundError("ROPgadget not available or failed")
 
@@ -2085,12 +2054,7 @@ def rop_gadgets():
             if gadget_filter:
                 cmd.extend(["--search", gadget_filter])
 
-            ropper_result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
+            ropper_result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
             if ropper_result.returncode == 0:
                 tool_used = "ropper"
@@ -2101,10 +2065,7 @@ def rop_gadgets():
                         parts = line.split(":", 1)
                         addr = parts[0].strip()
                         instructions = parts[1].strip().rstrip(";") if len(parts) > 1 else ""
-                        gadgets.append({
-                            "address": addr,
-                            "instructions": instructions
-                        })
+                        gadgets.append({"address": addr, "instructions": instructions})
             else:
                 raise FileNotFoundError("ropper not available or failed")
 
@@ -2113,8 +2074,7 @@ def rop_gadgets():
             tool_used = "objdump_manual"
             try:
                 disasm_result = subprocess.run(
-                    ["objdump", "-d", "-M", "intel", str(binary_path)],
-                    capture_output=True, text=True, timeout=30
+                    ["objdump", "-d", "-M", "intel", str(binary_path)], capture_output=True, text=True, timeout=30
                 )
 
                 # Search for ret instructions and look backwards for useful gadgets
@@ -2132,10 +2092,7 @@ def rop_gadgets():
                         if gadget_lines and addr_part:
                             gadget_str = " ; ".join(gadget_lines)
                             if not gadget_filter or gadget_filter.lower() in gadget_str.lower():
-                                gadgets.append({
-                                    "address": f"0x{addr_part.strip()}",
-                                    "instructions": gadget_str
-                                })
+                                gadgets.append({"address": f"0x{addr_part.strip()}", "instructions": gadget_str})
             except Exception:
                 pass
 
@@ -2152,9 +2109,14 @@ def rop_gadgets():
         "truncated": len(gadgets) > 500,
         "max_depth": max_depth,
         "filter": gadget_filter,
-        "tool_used": tool_used
+        "tool_used": tool_used,
     }
-    log_tool_call("rop_gadgets", {"binary": binary, "max_depth": max_depth, "filter": gadget_filter}, {"count": len(gadgets), "tool": tool_used}, duration)
+    log_tool_call(
+        "rop_gadgets",
+        {"binary": binary, "max_depth": max_depth, "filter": gadget_filter},
+        {"count": len(gadgets), "tool": tool_used},
+        duration,
+    )
 
     return jsonify(result_data)
 
@@ -2166,6 +2128,7 @@ def frida_attach():
     Spawns the binary, injects the script, and returns output.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -2196,13 +2159,7 @@ def frida_attach():
 
     try:
         # Use frida CLI to spawn and inject
-        cmd = [
-            "frida",
-            "-f", str(binary_path),
-            "-l", script_path,
-            "--no-pause",
-            "-q"
-        ]
+        cmd = ["frida", "-f", str(binary_path), "-l", script_path, "--no-pause", "-q"]
 
         # Add binary arguments if provided
         if args:
@@ -2210,11 +2167,7 @@ def frida_attach():
             cmd.extend(args)
 
         result = subprocess.run(
-            cmd,
-            input=stdin_input if stdin_input else None,
-            capture_output=True,
-            text=True,
-            timeout=timeout
+            cmd, input=stdin_input if stdin_input else None, capture_output=True, text=True, timeout=timeout
         )
 
         duration = (time.time() - start) * 1000
@@ -2224,9 +2177,11 @@ def frida_attach():
             "stderr": result.stderr,
             "returncode": result.returncode,
             "script_used": script[:500],
-            "timeout": timeout
+            "timeout": timeout,
         }
-        log_tool_call("frida_attach", {"binary": binary, "timeout": timeout}, {"returncode": result.returncode}, duration)
+        log_tool_call(
+            "frida_attach", {"binary": binary, "timeout": timeout}, {"returncode": result.returncode}, duration
+        )
 
         return jsonify(result_data)
 
@@ -2254,6 +2209,7 @@ def frida_trace():
     Traces specified functions and returns the call log.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -2291,11 +2247,7 @@ def frida_trace():
             cmd.extend(args)
 
         result = subprocess.run(
-            cmd,
-            input=stdin_input if stdin_input else None,
-            capture_output=True,
-            text=True,
-            timeout=timeout
+            cmd, input=stdin_input if stdin_input else None, capture_output=True, text=True, timeout=timeout
         )
 
         # Parse trace output into structured calls
@@ -2314,7 +2266,7 @@ def frida_trace():
             "trace_calls": trace_calls,
             "call_count": len(trace_calls),
             "stderr": result.stderr,
-            "returncode": result.returncode
+            "returncode": result.returncode,
         }
         log_tool_call("frida_trace", {"binary": binary, "functions": functions}, {"calls": len(trace_calls)}, duration)
 
@@ -2342,6 +2294,7 @@ def frida_hook():
     Generates an Interceptor.attach script from on_enter/on_leave callbacks.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -2368,7 +2321,9 @@ def frida_hook():
     timeout = max(1, min(timeout, 120))
 
     # Build the Frida hook script
-    on_enter_body = on_enter if on_enter else 'console.log("[*] " + this.context.pc + " -> " + "' + target + ' called");'
+    on_enter_body = (
+        on_enter if on_enter else 'console.log("[*] " + this.context.pc + " -> " + "' + target + ' called");'
+    )
     on_leave_body = on_leave if on_leave else 'console.log("[*] ' + target + ' returned: " + retval);'
 
     # Determine if target is an address or symbol name
@@ -2396,24 +2351,14 @@ if (targetAddr) {{
         script_path = f.name
 
     try:
-        cmd = [
-            "frida",
-            "-f", str(binary_path),
-            "-l", script_path,
-            "--no-pause",
-            "-q"
-        ]
+        cmd = ["frida", "-f", str(binary_path), "-l", script_path, "--no-pause", "-q"]
 
         if args:
             cmd.append("--")
             cmd.extend(args)
 
         result = subprocess.run(
-            cmd,
-            input=stdin_input if stdin_input else None,
-            capture_output=True,
-            text=True,
-            timeout=timeout
+            cmd, input=stdin_input if stdin_input else None, capture_output=True, text=True, timeout=timeout
         )
 
         duration = (time.time() - start) * 1000
@@ -2424,7 +2369,7 @@ if (targetAddr) {{
             "stderr": result.stderr,
             "returncode": result.returncode,
             "script_generated": frida_script.strip(),
-            "timeout": timeout
+            "timeout": timeout,
         }
         log_tool_call("frida_hook", {"binary": binary, "target": target}, {"returncode": result.returncode}, duration)
 
@@ -2454,6 +2399,7 @@ def gdb_vmmap():
     Uses GEF's vmmap command or falls back to /proc/self/maps via GDB.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -2472,29 +2418,33 @@ def gdb_vmmap():
     bp_cmd = f"break *{breakpoint}" if breakpoint.startswith("0x") else f"break {breakpoint}"
 
     # Try GEF vmmap first, then fall back to info proc mappings
-    gdb_script = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        bp_cmd,
-        "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
-        "echo ===VMMAP===\\n",
-        "vmmap",
-        "echo ===PROC_MAP===\\n",
-        "info proc mappings",
-        "quit"
-    ])
+    gdb_script = "\n".join(
+        [
+            "set pagination off",
+            "set confirm off",
+            bp_cmd,
+            "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
+            "echo ===VMMAP===\\n",
+            "vmmap",
+            "echo ===PROC_MAP===\\n",
+            "info proc mappings",
+            "quit",
+        ]
+    )
 
-    gdb_script_fallback = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        bp_cmd,
-        "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
-        "echo ===PROC_MAP===\\n",
-        "info proc mappings",
-        "echo ===SECTIONS===\\n",
-        "maintenance info sections",
-        "quit"
-    ])
+    gdb_script_fallback = "\n".join(
+        [
+            "set pagination off",
+            "set confirm off",
+            bp_cmd,
+            "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
+            "echo ===PROC_MAP===\\n",
+            "info proc mappings",
+            "echo ===SECTIONS===\\n",
+            "maintenance info sections",
+            "quit",
+        ]
+    )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".gdb", delete=False) as f:
         f.write(gdb_script)
@@ -2503,10 +2453,7 @@ def gdb_vmmap():
     fallback_path = None
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-x", script_path, str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=30
+            ["gdb", "-batch", "-x", script_path, str(binary_path)], capture_output=True, text=True, timeout=30
         )
 
         raw_output = result.stdout + result.stderr
@@ -2518,10 +2465,7 @@ def gdb_vmmap():
                 fallback_path = f.name
 
             result = subprocess.run(
-                ["gdb", "-batch", "-x", fallback_path, str(binary_path)],
-                capture_output=True,
-                text=True,
-                timeout=30
+                ["gdb", "-batch", "-x", fallback_path, str(binary_path)], capture_output=True, text=True, timeout=30
             )
             raw_output = result.stdout + result.stderr
 
@@ -2555,7 +2499,7 @@ def gdb_vmmap():
                                 "end": parts[1],
                                 "size": parts[2],
                                 "offset": parts[3] if len(parts) > 3 else "0x0",
-                                "objfile": parts[4] if len(parts) > 4 else ""
+                                "objfile": parts[4] if len(parts) > 4 else "",
                             }
                             regions.append(region)
                         except IndexError:
@@ -2568,9 +2512,14 @@ def gdb_vmmap():
             "gef_available": used_gef,
             "regions": regions,
             "region_count": len(regions),
-            "raw_output": raw_output
+            "raw_output": raw_output,
         }
-        log_tool_call("gdb_vmmap", {"binary": binary, "breakpoint": breakpoint}, {"regions": len(regions), "gef": used_gef}, duration)
+        log_tool_call(
+            "gdb_vmmap",
+            {"binary": binary, "breakpoint": breakpoint},
+            {"regions": len(regions), "gef": used_gef},
+            duration,
+        )
 
         return jsonify(result_data)
 
@@ -2596,6 +2545,7 @@ def gdb_search_pattern():
     Uses GEF's search-pattern command or falls back to GDB find command.
     """
     import time
+
     start = time.time()
 
     data = request.json or {}
@@ -2628,29 +2578,33 @@ def gdb_search_pattern():
         gef_search = f'search-pattern "{pattern}"'
         gdb_find_pattern = f'"{pattern}"'
 
-    gdb_script = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        bp_cmd,
-        "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
-        "echo ===GEF_SEARCH===\\n",
-        gef_search,
-        "echo ===END_SEARCH===\\n",
-        "quit"
-    ])
+    gdb_script = "\n".join(
+        [
+            "set pagination off",
+            "set confirm off",
+            bp_cmd,
+            "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
+            "echo ===GEF_SEARCH===\\n",
+            gef_search,
+            "echo ===END_SEARCH===\\n",
+            "quit",
+        ]
+    )
 
-    gdb_script_fallback = "\n".join([
-        "set pagination off",
-        "set confirm off",
-        bp_cmd,
-        "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
-        "echo ===PROC_MAP===\\n",
-        "info proc mappings",
-        "echo ===FIND_SEARCH===\\n",
-        f"find {gdb_find_pattern}",
-        "echo ===END_SEARCH===\\n",
-        "quit"
-    ])
+    gdb_script_fallback = "\n".join(
+        [
+            "set pagination off",
+            "set confirm off",
+            bp_cmd,
+            "run" + (f" <<< '{stdin_input}'" if stdin_input else ""),
+            "echo ===PROC_MAP===\\n",
+            "info proc mappings",
+            "echo ===FIND_SEARCH===\\n",
+            f"find {gdb_find_pattern}",
+            "echo ===END_SEARCH===\\n",
+            "quit",
+        ]
+    )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".gdb", delete=False) as f:
         f.write(gdb_script)
@@ -2659,10 +2613,7 @@ def gdb_search_pattern():
     fallback_path = None
     try:
         result = subprocess.run(
-            ["gdb", "-batch", "-x", script_path, str(binary_path)],
-            capture_output=True,
-            text=True,
-            timeout=30
+            ["gdb", "-batch", "-x", script_path, str(binary_path)], capture_output=True, text=True, timeout=30
         )
 
         raw_output = result.stdout + result.stderr
@@ -2674,10 +2625,7 @@ def gdb_search_pattern():
                 fallback_path = f.name
 
             result = subprocess.run(
-                ["gdb", "-batch", "-x", fallback_path, str(binary_path)],
-                capture_output=True,
-                text=True,
-                timeout=30
+                ["gdb", "-batch", "-x", fallback_path, str(binary_path)], capture_output=True, text=True, timeout=30
             )
             raw_output = result.stdout + result.stderr
 
@@ -2713,9 +2661,14 @@ def gdb_search_pattern():
             "gef_available": used_gef,
             "locations": found_locations,
             "match_count": len(found_locations),
-            "raw_output": raw_output
+            "raw_output": raw_output,
         }
-        log_tool_call("gdb_search_pattern", {"binary": binary, "pattern": pattern, "type": search_type}, {"matches": len(found_locations), "gef": used_gef}, duration)
+        log_tool_call(
+            "gdb_search_pattern",
+            {"binary": binary, "pattern": pattern, "type": search_type},
+            {"matches": len(found_locations), "gef": used_gef},
+            duration,
+        )
 
         return jsonify(result_data)
 
