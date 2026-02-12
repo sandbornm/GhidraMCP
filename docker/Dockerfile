@@ -47,7 +47,6 @@ RUN apt-get update && apt-get install -y \
     hexedit \
     # Additional tools for RE competitions
     nasm \
-    radare2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install GEF (GDB Enhanced Features) - do this BEFORE network isolation
