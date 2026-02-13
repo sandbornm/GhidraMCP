@@ -55,3 +55,9 @@ lib/*.jar
 
 __pycache__
 .venv/
+
+docker/bins/
+docker/logs/
+
+.mcp.json
+uv.lock

@@ -1149,7 +1149,7 @@ public class GhidraMCPPlugin extends Plugin {
                 if (instr.getAddress().compareTo(end) > 0) {
                     break; // Stop if we've gone past the end of the function
                 }
-                String comment = listing.getComment(CodeUnit.EOL_COMMENT, instr.getAddress());
+                String comment = listing.getComment(CommentType.EOL, instr.getAddress());
                 comment = (comment != null) ? "; " + comment : "";
 
                 result.append(String.format("%s: %s %s\n", 
@@ -1167,7 +1167,7 @@ public class GhidraMCPPlugin extends Plugin {
     /**
      * Set a comment using the specified comment type (PRE_COMMENT or EOL_COMMENT)
      */
-    private boolean setCommentAtAddress(String addressStr, String comment, int commentType, String transactionName) {
+    private boolean setCommentAtAddress(String addressStr, String comment, CommentType commentType, String transactionName) {
         Program program = getCurrentProgram();
         if (program == null) return false;
         if (addressStr == null || addressStr.isEmpty() || comment == null) return false;
@@ -1198,14 +1198,14 @@ public class GhidraMCPPlugin extends Plugin {
      * Set a comment for a given address in the function pseudocode
      */
     private boolean setDecompilerComment(String addressStr, String comment) {
-        return setCommentAtAddress(addressStr, comment, CodeUnit.PRE_COMMENT, "Set decompiler comment");
+        return setCommentAtAddress(addressStr, comment, CommentType.PRE, "Set decompiler comment");
     }
 
     /**
      * Set a comment for a given address in the function disassembly
      */
     private boolean setDisassemblyComment(String addressStr, String comment) {
-        return setCommentAtAddress(addressStr, comment, CodeUnit.EOL_COMMENT, "Set disassembly comment");
+        return setCommentAtAddress(addressStr, comment, CommentType.EOL, "Set disassembly comment");
     }
 
     /**
@@ -1345,7 +1345,7 @@ public class GhidraMCPPlugin extends Plugin {
         try {
             program.getListing().setComment(
                 func.getEntryPoint(), 
-                CodeUnit.PLATE_COMMENT, 
+                CommentType.PLATE, 
                 "Setting prototype: " + prototype
             );
         } finally {
@@ -2590,9 +2590,9 @@ public class GhidraMCPPlugin extends Plugin {
             // Comments
             Listing listing = program.getListing();
             String[] commentTypes = {"EOL", "Pre", "Post", "Plate", "Repeatable"};
-            int[] commentTypeConstants = {
-                CodeUnit.EOL_COMMENT, CodeUnit.PRE_COMMENT, CodeUnit.POST_COMMENT,
-                CodeUnit.PLATE_COMMENT, CodeUnit.REPEATABLE_COMMENT
+            CommentType[] commentTypeConstants = {
+                CommentType.EOL, CommentType.PRE, CommentType.POST,
+                CommentType.PLATE, CommentType.REPEATABLE
             };
             boolean hasComments = false;
             for (int i = 0; i < commentTypes.length; i++) {
@@ -2608,19 +2608,23 @@ public class GhidraMCPPlugin extends Plugin {
             if (hasComments) result.append("\n");
 
             // References to this address
-            java.util.List<Reference> refsToList = new java.util.ArrayList<>();
-            for (Reference ref : program.getReferenceManager().getReferencesTo(addr)) {
-                refsToList.add(ref);
-            }
-            Reference[] refsTo = refsToList.toArray(new Reference[0]);
-            if (refsTo.length > 0) {
-                result.append("References TO this address (").append(refsTo.length).append("):\n");
-                int shown = Math.min(refsTo.length, 10);
-                for (int i = 0; i < shown; i++) {
-                    result.append(String.format("  from %s [%s]\n",
-                        refsTo[i].getFromAddress(), refsTo[i].getReferenceType().getName()));
+            ReferenceIterator refsToIter = program.getReferenceManager().getReferencesTo(addr);
+            List<Reference> refsToSample = new ArrayList<>();
+            int refsToCount = 0;
+            while (refsToIter.hasNext()) {
+                Reference ref = refsToIter.next();
+                refsToCount++;
+                if (refsToSample.size() < 10) {
+                    refsToSample.add(ref);
                 }
-                if (refsTo.length > 10) result.append("  ... and ").append(refsTo.length - 10).append(" more\n");
+            }
+            if (refsToCount > 0) {
+                result.append("References TO this address (").append(refsToCount).append("):\n");
+                for (Reference ref : refsToSample) {
+                    result.append(String.format("  from %s [%s]\n",
+                        ref.getFromAddress(), ref.getReferenceType().getName()));
+                }
+                if (refsToCount > 10) result.append("  ... and ").append(refsToCount - 10).append(" more\n");
                 result.append("\n");
             }
 
@@ -2754,40 +2758,40 @@ public class GhidraMCPPlugin extends Plugin {
         Listing listing = program.getListing();
 
         // Define which comment types to search
-        int[] commentTypes;
+        CommentType[] commentTypes;
         String[] commentTypeNames;
 
         if (commentTypeFilter != null && !commentTypeFilter.isEmpty()) {
             switch (commentTypeFilter.toLowerCase()) {
                 case "eol":
-                    commentTypes = new int[]{CodeUnit.EOL_COMMENT};
+                    commentTypes = new CommentType[]{CommentType.EOL};
                     commentTypeNames = new String[]{"EOL"};
                     break;
                 case "pre":
-                    commentTypes = new int[]{CodeUnit.PRE_COMMENT};
+                    commentTypes = new CommentType[]{CommentType.PRE};
                     commentTypeNames = new String[]{"Pre"};
                     break;
                 case "post":
-                    commentTypes = new int[]{CodeUnit.POST_COMMENT};
+                    commentTypes = new CommentType[]{CommentType.POST};
                     commentTypeNames = new String[]{"Post"};
                     break;
                 case "plate":
-                    commentTypes = new int[]{CodeUnit.PLATE_COMMENT};
+                    commentTypes = new CommentType[]{CommentType.PLATE};
                     commentTypeNames = new String[]{"Plate"};
                     break;
                 case "repeatable":
-                    commentTypes = new int[]{CodeUnit.REPEATABLE_COMMENT};
+                    commentTypes = new CommentType[]{CommentType.REPEATABLE};
                     commentTypeNames = new String[]{"Repeatable"};
                     break;
                 default:
-                    commentTypes = new int[]{CodeUnit.EOL_COMMENT, CodeUnit.PRE_COMMENT,
-                        CodeUnit.POST_COMMENT, CodeUnit.PLATE_COMMENT, CodeUnit.REPEATABLE_COMMENT};
+                    commentTypes = new CommentType[]{CommentType.EOL, CommentType.PRE,
+                        CommentType.POST, CommentType.PLATE, CommentType.REPEATABLE};
                     commentTypeNames = new String[]{"EOL", "Pre", "Post", "Plate", "Repeatable"};
                     break;
             }
         } else {
-            commentTypes = new int[]{CodeUnit.EOL_COMMENT, CodeUnit.PRE_COMMENT,
-                CodeUnit.POST_COMMENT, CodeUnit.PLATE_COMMENT, CodeUnit.REPEATABLE_COMMENT};
+            commentTypes = new CommentType[]{CommentType.EOL, CommentType.PRE,
+                CommentType.POST, CommentType.PLATE, CommentType.REPEATABLE};
             commentTypeNames = new String[]{"EOL", "Pre", "Post", "Plate", "Repeatable"};
         }
 
