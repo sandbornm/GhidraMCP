@@ -104,6 +104,7 @@ Quick-start guide for AI agents (Claude, GPT, etc.) working with this reverse en
 
 **Binary analysis:**
 - `gdb_checksec(binary)` — NX, PIE, RELRO, canary
+- `gdb_pe_info(binary)` — PE (Windows) structure, sections, imports, exports
 - `gdb_disassemble(binary, symbol)` — objdump disassembly
 - `gdb_strings(binary)` / `gdb_sections(binary)` / `gdb_symbols(binary)`
 - `gdb_entropy(binary)` — packing/encryption detection
@@ -112,6 +113,15 @@ Quick-start guide for AI agents (Claude, GPT, etc.) working with this reverse en
 - `gdb_rop_gadgets(binary, max_depth, filter)` — ROP gadget finding
 - `gdb_patch_elf(binary, address, bytes)` — patch ELF at virtual address
 
+**Angr symbolic execution (headless):**
+- `angr_explore(binary, find_addr)` — find stdin that reaches target address
+- `angr_cfg(binary)` — control flow graph (nodes, edges)
+- `angr_entry(binary)` — entry point and main address
+- `gdb_angr_selftest(timeout)` — verify angr runtime/symbolic execution is healthy
+
+**Autonomous:**
+- `auto_triage(binary)` — run full triage pipeline (file_info, checksec, entropy, imports, strings)
+
 ### Trajectory Recording
 
 - `trajectory_start(binary_name)` — begin recording session
@@ -119,6 +129,20 @@ Quick-start guide for AI agents (Claude, GPT, etc.) working with this reverse en
 - `trajectory_note(note, category)` — add observations during analysis
 - `trajectory_status()` / `trajectory_list()` — session management
 - `trajectory_analyze(path)` / `trajectory_export_markdown(path)` — post-analysis
+- `analysis_session_recap(...)` — full write-up with tool timeline + terminal snapshots
+
+### Observability / Telemetry
+
+- `gdb_get_telemetry(lines)` — recent GDB API tool calls
+- `gdb_get_command_telemetry(lines)` — command history with stdout/stderr snapshots
+- `trajectory_log_llm_turn(role, content, metadata_json)` — log LLM/user conversational turns
+- `trajectory_assert_logging(...)` — enforce minimum logging completeness
+
+## Agent Logging SOP
+
+Follow the session contract in:
+
+- `docs/AGENT_OBSERVABILITY_INSTRUCTIONS.md`
 
 ## Typical RE Workflow
 

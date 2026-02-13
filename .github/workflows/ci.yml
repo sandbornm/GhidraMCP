@@ -24,13 +24,14 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
-        cache: 'pip'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies (uv)
+      run: uv pip install -e . -r requirements-dev.txt
 
     - name: Run ruff linter
       run: ruff check . --output-format=github
@@ -59,13 +60,14 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        cache: 'pip'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies (uv)
+      run: uv pip install -e . -r requirements-dev.txt
 
     - name: Run unit tests with coverage
       run: |
@@ -98,20 +100,18 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
-        cache: 'pip'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies (uv)
+      run: uv pip install -e . -r requirements-dev.txt
 
     - name: Run integration tests
       run: |
-        python -m pytest tests/ -v \
-          -m "integration" \
-          --timeout=60 \
-          || echo "Integration tests skipped (no live services)"
+        python -m pytest tests/ -v -m "integration" --timeout=60
 
   # ===========================================================================
   # Java/Maven Build (Ghidra Plugin)
@@ -196,6 +196,64 @@ jobs:
         cache-to: type=gha,mode=max
 
   # ===========================================================================
+  # Docker Runtime Smoke Tests (new endpoints)
+  # ===========================================================================
+  docker-smoke:
+    name: Docker Runtime Smoke Tests
+    runs-on: ubuntu-latest
+    needs: [docker-build]
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Start analysis container
+      run: docker compose -f docker/docker-compose.yml up -d --build
+
+    - name: Wait for health
+      run: |
+        set -euo pipefail
+        for i in $(seq 1 20); do
+          if curl -sf "http://127.0.0.1:5000/health" > /tmp/health.json; then
+            exit 0
+          fi
+          sleep 2
+        done
+        echo "Container did not become healthy in time"
+        docker compose -f docker/docker-compose.yml logs
+        exit 1
+
+    - name: Verify new endpoint behavior (missing binary paths)
+      run: |
+        set -euo pipefail
+
+        code_pe=$(curl -sS -o /tmp/pe_info.json -w "%{http_code}" \
+          -X POST "http://127.0.0.1:5000/pe/info" \
+          -H "Content-Type: application/json" \
+          -d '{"binary":"definitely_missing.exe"}')
+        test "$code_pe" = "404"
+
+        code_angr=$(curl -sS -o /tmp/angr_entry.json -w "%{http_code}" \
+          -X POST "http://127.0.0.1:5000/angr/entry" \
+          -H "Content-Type: application/json" \
+          -d '{"binary":"definitely_missing.bin"}')
+        test "$code_angr" = "404"
+
+    - name: Verify angr self-test runtime health
+      run: |
+        set -euo pipefail
+        curl -sS -X POST "http://127.0.0.1:5000/angr/selftest" \
+          -H "Content-Type: application/json" \
+          -d '{"timeout":30}' > /tmp/angr_selftest.json
+        python3 -c "import json; d=json.load(open('/tmp/angr_selftest.json')); assert d.get('ok') is True, d; assert d.get('found_states', 0) >= 1, d; print('angr selftest ok')"
+
+    - name: Dump container logs on failure
+      if: failure()
+      run: docker compose -f docker/docker-compose.yml logs
+
+    - name: Stop analysis container
+      if: always()
+      run: docker compose -f docker/docker-compose.yml down -v
+
+  # ===========================================================================
   # Security Scan
   # ===========================================================================
   security:
@@ -210,11 +268,13 @@ jobs:
       with:
         python-version: '3.12'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-dev.txt
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Install dependencies (uv)
+      run: uv pip install -e . -r requirements-dev.txt
 
     - name: Run ruff security rules
       run: ruff check . --select S --output-format=github || true
@@ -228,3 +288,15 @@ jobs:
         if grep -rn "api_key\s*=\s*['\"]" --include="*.py" --exclude-dir=tests .; then
           echo "WARNING: Possible hardcoded API keys found"
         fi
+
+  # ===========================================================================
+  # Merge Gate - All checks must pass before merge
+  # Add "Merge Gate" as required status check in branch protection
+  # ===========================================================================
+  merge-gate:
+    name: Merge Gate
+    runs-on: ubuntu-latest
+    needs: [lint, test, integration-test, build-java, docker-build, docker-smoke, security]
+    if: github.event_name == 'pull_request'
+    steps:
+    - run: echo "All checks passed - ready to merge"

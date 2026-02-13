@@ -31,13 +31,19 @@ Docker container providing a full x86-64 Linux environment for dynamic analysis,
 
 ### Libraries Available
 - `pyelftools`, `lief` - ELF/binary parsing
+- `pefile` - PE (Windows) binary parsing
 - `pycryptodome` - cryptographic primitives
 - `capstone` / `keystone-engine` / `unicorn` - disassembly, assembly, emulation
 - `ropper` / `ROPGadget` - ROP gadget finding
-- `angr` - symbolic execution
+- `angr` - symbolic execution (headless via `/angr/explore`, `/angr/cfg`, `/angr/entry`)
 - `z3-solver` - SMT constraint solver
 - `frida-tools` - Frida instrumentation
 - `pwntools` - exploit development
+
+### QEMU & Windows PE
+- **QEMU user-mode**: Emulates Linux binaries across architectures (ARM, MIPS, etc.) on x86-64.
+- **Windows PE**: QEMU user-mode does NOT run Windows executables. For PE analysis use `gdb_pe_info`.
+  Optional: Add `wine64` to the Dockerfile to run Windows PE on Linux.
 
 ## Quick Start
 
@@ -83,10 +89,24 @@ docker-compose down
 | Tool | Description |
 |------|-------------|
 | `gdb_checksec(binary)` | Check security features |
+| `gdb_pe_info(binary)` | PE (Windows) structure, sections, imports, exports |
 | `gdb_got_plt(binary)` | GOT/PLT table entries |
 | `gdb_rop_gadgets(binary, filter)` | Find ROP gadgets |
 | `gdb_entropy(binary)` | Packing/encryption detection |
 | `gdb_binwalk(binary)` | Embedded file detection |
+
+### Angr Symbolic Execution
+| Tool | Description |
+|------|-------------|
+| `angr_explore(binary, find_addr)` | Find stdin that reaches target address |
+| `angr_cfg(binary)` | Control flow graph (nodes, edges) |
+| `angr_entry(binary)` | Entry point and main address |
+| `gdb_angr_selftest(timeout)` | Validate angr runtime + symbolic exploration |
+
+### Autonomous
+| Tool | Description |
+|------|-------------|
+| `auto_triage(binary)` | Run full triage pipeline (file_info, checksec, entropy, imports, strings) |
 
 ## API Endpoints
 
@@ -97,6 +117,10 @@ docker-compose down
 | `/list_bins` | GET | List binaries |
 | `/upload` | POST | Upload binary (multipart) |
 | `/run` | POST | Run binary |
+| `/logs` | GET | Server logs |
+| `/telemetry` | GET | Tool-level telemetry |
+| `/command_telemetry` | GET | Command history + output snapshots |
+| `/angr/selftest` | POST | angr runtime health/self-test |
 
 ### GDB Debugging
 | Endpoint | Method | Description |

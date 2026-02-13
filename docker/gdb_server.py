@@ -10,10 +10,12 @@ import logging
 import os
 import subprocess
 import tempfile
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, has_request_context, jsonify, request
 
 # Set up logging
 LOG_DIR = Path("/analysis/logs")
@@ -28,6 +30,8 @@ logger = logging.getLogger(__name__)
 
 # Tool call telemetry
 TELEMETRY_FILE = LOG_DIR / "tool_calls.jsonl"
+COMMAND_TELEMETRY_FILE = LOG_DIR / "command_calls.jsonl"
+MAX_COMMAND_OUTPUT_CHARS = 4000
 
 
 def log_tool_call(tool_name: str, params: dict, result: dict, duration_ms: float = None):
@@ -44,6 +48,112 @@ def log_tool_call(tool_name: str, params: dict, result: dict, duration_ms: float
             f.write(json.dumps(entry) + "\n")
     except Exception as e:
         logger.error(f"Failed to log telemetry: {e}")
+
+
+def _truncate_text(value: str | bytes | None, max_chars: int = MAX_COMMAND_OUTPUT_CHARS) -> str:
+    """Best-effort conversion and truncation for command output snapshots."""
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    if len(value) <= max_chars:
+        return value
+    return value[:max_chars] + f"\n...[truncated {len(value) - max_chars} chars]"
+
+
+def _normalize_command(raw_cmd) -> str:
+    """Format subprocess command arguments for telemetry display."""
+    if isinstance(raw_cmd, (list, tuple)):
+        return " ".join(str(part) for part in raw_cmd)
+    return str(raw_cmd)
+
+
+def _log_command_call(
+    *,
+    tool: str,
+    command,
+    duration_ms: float,
+    returncode: int | None = None,
+    timeout_seconds: float | None = None,
+    timed_out: bool = False,
+    error: str | None = None,
+    stdout=None,
+    stderr=None,
+):
+    """Write command execution telemetry for observability and post-session recap."""
+    entry = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "tool": tool,
+        "command": _normalize_command(command),
+        "duration_ms": round(duration_ms, 2),
+        "returncode": returncode,
+        "timeout_seconds": timeout_seconds,
+        "timed_out": timed_out,
+        "error": error,
+        "stdout_tail": _truncate_text(stdout),
+        "stderr_tail": _truncate_text(stderr),
+    }
+    try:
+        with open(COMMAND_TELEMETRY_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception as e:
+        logger.error(f"Failed to log command telemetry: {e}")
+
+
+_ORIGINAL_SUBPROCESS_RUN = subprocess.run
+
+
+def _logged_subprocess_run(*args, **kwargs):
+    """
+    Global subprocess.run wrapper.
+    Captures command history and terminal-like output snapshots for recap/debugging.
+    """
+    start = time.time()
+    command = args[0] if args else kwargs.get("args")
+    timeout_seconds = kwargs.get("timeout")
+    tool_name = "background"
+    if has_request_context():
+        tool_name = request.endpoint or request.path
+
+    try:
+        result = _ORIGINAL_SUBPROCESS_RUN(*args, **kwargs)
+        _log_command_call(
+            tool=tool_name,
+            command=command,
+            duration_ms=(time.time() - start) * 1000,
+            returncode=result.returncode,
+            timeout_seconds=timeout_seconds,
+            stdout=getattr(result, "stdout", None),
+            stderr=getattr(result, "stderr", None),
+        )
+        return result
+    except subprocess.TimeoutExpired as exc:
+        _log_command_call(
+            tool=tool_name,
+            command=command,
+            duration_ms=(time.time() - start) * 1000,
+            returncode=None,
+            timeout_seconds=timeout_seconds,
+            timed_out=True,
+            error=f"TimeoutExpired: {exc}",
+            stdout=getattr(exc, "stdout", None),
+            stderr=getattr(exc, "stderr", None),
+        )
+        raise
+    except Exception as exc:
+        _log_command_call(
+            tool=tool_name,
+            command=command,
+            duration_ms=(time.time() - start) * 1000,
+            returncode=None,
+            timeout_seconds=timeout_seconds,
+            error=str(exc),
+        )
+        raise
+
+
+# Install global wrapper so existing subprocess calls are captured without invasive refactors.
+subprocess.run = _logged_subprocess_run
 
 
 app = Flask(__name__)
@@ -977,6 +1087,23 @@ def get_telemetry():
             all_lines = f.readlines()
         calls = [json.loads(line) for line in all_lines[-lines:]]
         return jsonify({"calls": calls, "total": len(all_lines)})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+@app.route("/command_telemetry", methods=["GET"])
+def get_command_telemetry():
+    """Get subprocess command telemetry with output snapshots."""
+    lines = request.args.get("lines", 100, type=int)
+
+    if not COMMAND_TELEMETRY_FILE.exists():
+        return jsonify({"commands": [], "message": "No command telemetry yet"})
+
+    try:
+        with open(COMMAND_TELEMETRY_FILE) as f:
+            all_lines = f.readlines()
+        commands = [json.loads(line) for line in all_lines[-lines:]]
+        return jsonify({"commands": commands, "total": len(all_lines)})
     except Exception as e:
         return jsonify({"error": str(e)})
 
@@ -2685,6 +2812,401 @@ def gdb_search_pattern():
         os.unlink(script_path)
         if fallback_path:
             os.unlink(fallback_path)
+
+
+# =============================================================================
+# PE (Windows) Binary Analysis
+# =============================================================================
+
+
+@app.route("/pe/info", methods=["POST"])
+def pe_info():
+    """Get PE (Windows) binary structure: headers, sections, imports, exports."""
+    import time
+
+    start = time.time()
+    data = request.json or {}
+    binary = data.get("binary")
+
+    if not binary:
+        return jsonify({"error": "No binary specified"}), 400
+
+    binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
+    if not binary_path.exists():
+        return jsonify({"error": f"Binary not found: {binary_path}"}), 404
+
+    try:
+        import pefile
+
+        pe = pefile.PE(str(binary_path), fast_load=True)
+        # Required when using fast_load=True, otherwise imports/exports may be missing.
+        pe.parse_data_directories()
+        machine_map = {0x14c: "i386", 0x8664: "amd64", 0x1c4: "arm", 0xaa64: "arm64"}
+        machine = pe.FILE_HEADER.Machine
+        result = {
+            "binary": str(binary_path),
+            "format": "PE",
+            "machine": machine,
+            "machine_type": machine_map.get(machine, f"UNKNOWN(0x{machine:x})"),
+            "sections": [],
+            "entry_point": hex(pe.OPTIONAL_HEADER.AddressOfEntryPoint) if hasattr(pe, "OPTIONAL_HEADER") else None,
+            "image_base": hex(pe.OPTIONAL_HEADER.ImageBase) if hasattr(pe, "OPTIONAL_HEADER") else None,
+        }
+
+        for section in pe.sections:
+            result["sections"].append(
+                {
+                    "name": section.Name.decode(errors="ignore").strip("\x00"),
+                    "virtual_address": hex(section.VirtualAddress),
+                    "virtual_size": section.Misc_VirtualSize,
+                    "raw_size": section.SizeOfRawData,
+                    "entropy": section.get_entropy() if hasattr(section, "get_entropy") else None,
+                }
+            )
+
+        if hasattr(pe, "DIRECTORY_ENTRY_IMPORT") and pe.DIRECTORY_ENTRY_IMPORT:
+            result["imports"] = []
+            for entry in pe.DIRECTORY_ENTRY_IMPORT:
+                dll = entry.dll.decode(errors="ignore") if isinstance(entry.dll, bytes) else str(entry.dll)
+                for imp in entry.imports:
+                    if imp.name:
+                        result["imports"].append({"dll": dll, "name": imp.name.decode(errors="ignore")})
+                    else:
+                        result["imports"].append({"dll": dll, "ordinal": imp.ordinal})
+
+        if hasattr(pe, "DIRECTORY_ENTRY_EXPORT") and pe.DIRECTORY_ENTRY_EXPORT:
+            result["exports"] = [
+                exp.name.decode(errors="ignore") if exp.name else f"ordinal_{exp.ordinal}"
+                for exp in pe.DIRECTORY_ENTRY_EXPORT.symbols
+            ]
+
+        pe.close()
+        duration = (time.time() - start) * 1000
+        log_tool_call("pe_info", {"binary": binary}, result, duration)
+        return jsonify(result)
+
+    except ImportError:
+        return jsonify({"error": "pefile not installed"}), 500
+    except Exception as e:
+        logger.error(f"PE info error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# =============================================================================
+# Angr Symbolic Execution (headless)
+# =============================================================================
+
+
+def _angr_project(binary_path: Path, timeout_sec: int = 60):
+    """Load angr project with timeout. Returns (project, error)."""
+    import signal
+
+    def handler(signum, frame):
+        raise TimeoutError("angr load timeout")
+
+    can_use_signals = threading.current_thread() is threading.main_thread()
+    old_handler = signal.getsignal(signal.SIGALRM) if can_use_signals else None
+    try:
+        if can_use_signals:
+            signal.signal(signal.SIGALRM, handler)
+            signal.alarm(timeout_sec)
+        import angr
+
+        project = angr.Project(str(binary_path), auto_load_libs=False)
+        return project, None
+    except TimeoutError as e:
+        return None, str(e)
+    except Exception as e:
+        return None, str(e)
+    finally:
+        if can_use_signals:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
+
+@app.route("/angr/explore", methods=["POST"])
+def angr_explore():
+    """
+    Symbolic execution: find input that reaches a target address.
+    Uses angr SimulationManager.explore() with find/avoid addresses.
+    """
+    import time
+
+    start = time.time()
+    data = request.json or {}
+    binary = data.get("binary")
+    find_addr = data.get("find_addr")
+    avoid_addrs = data.get("avoid_addrs", [])
+    timeout = min(data.get("timeout", 120), 300)
+    stdin_symbolic = data.get("stdin_symbolic", True)
+
+    if not binary:
+        return jsonify({"error": "No binary specified"}), 400
+    if not find_addr:
+        return jsonify({"error": "find_addr required (hex address to reach)"}), 400
+
+    binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
+    if not binary_path.exists():
+        return jsonify({"error": f"Binary not found: {binary_path}"}), 404
+
+    try:
+        import angr
+
+        project, err = _angr_project(binary_path, timeout_sec=30)
+        if err:
+            return jsonify({"error": f"Failed to load binary: {err}"}), 500
+
+        find_int = int(find_addr, 16) if isinstance(find_addr, str) else find_addr
+        avoid_ints = [int(a, 16) if isinstance(a, str) else a for a in avoid_addrs]
+
+        if stdin_symbolic:
+            state = project.factory.entry_state(stdin=angr.SimFile)
+        else:
+            state = project.factory.entry_state()
+
+        simgr = project.factory.simulation_manager(state)
+        timed_out = False
+
+        # Avoid angr-version-specific kwargs on explore(); enforce timeout via SIGALRM.
+        import signal
+
+        def _explore_timeout_handler(signum, frame):
+            raise TimeoutError("angr explore timeout")
+
+        can_use_signals = threading.current_thread() is threading.main_thread()
+        old_handler = signal.getsignal(signal.SIGALRM) if can_use_signals else None
+        try:
+            if can_use_signals:
+                signal.signal(signal.SIGALRM, _explore_timeout_handler)
+                signal.alarm(timeout)
+            simgr.explore(find=find_int, avoid=avoid_ints, n=1)
+        except TimeoutError:
+            timed_out = True
+        finally:
+            if can_use_signals:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
+
+        result = {
+            "binary": str(binary_path),
+            "find_addr": hex(find_int),
+            "found": len(simgr.found) > 0,
+            "active": len(simgr.active),
+            "deadended": len(simgr.deadended),
+            "errored": len(simgr.errored),
+            "timed_out": timed_out and len(simgr.found) == 0,
+        }
+
+        if simgr.found:
+            found_state = simgr.found[0]
+            try:
+                result["stdin_solution"] = found_state.posix.dumps(0).decode(errors="replace")
+            except Exception:
+                result["stdin_solution"] = "<binary or unprintable>"
+            result["reached_addr"] = hex(found_state.addr)
+
+        duration = (time.time() - start) * 1000
+        log_tool_call("angr_explore", {"binary": binary, "find_addr": find_addr}, result, duration)
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"angr explore error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/angr/cfg", methods=["POST"])
+def angr_cfg():
+    """Get control flow graph: basic blocks and edges. Lightweight CFG analysis."""
+    import time
+
+    start = time.time()
+    data = request.json or {}
+    binary = data.get("binary")
+    timeout = min(data.get("timeout", 60), 120)
+
+    if not binary:
+        return jsonify({"error": "No binary specified"}), 400
+
+    binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
+    if not binary_path.exists():
+        return jsonify({"error": f"Binary not found: {binary_path}"}), 404
+
+    try:
+        import angr
+
+        project, err = _angr_project(binary_path, timeout_sec=30)
+        if err:
+            return jsonify({"error": f"Failed to load binary: {err}"}), 500
+
+        cfg = project.analyses.CFGFast(timeout=timeout)
+        nodes = []
+        edges = []
+        for node in list(cfg.graph.nodes())[:500]:  # Limit output
+            if hasattr(node, "addr"):
+                nodes.append({"addr": hex(node.addr), "size": getattr(node, "size", 0)})
+        for src, dst in list(cfg.graph.edges())[:1000]:
+            if hasattr(src, "addr") and hasattr(dst, "addr"):
+                edges.append({"from": hex(src.addr), "to": hex(dst.addr)})
+
+        result = {
+            "binary": str(binary_path),
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "nodes": nodes,
+            "edges": edges,
+        }
+        duration = (time.time() - start) * 1000
+        log_tool_call("angr_cfg", {"binary": binary}, {"nodes": len(nodes), "edges": len(edges)}, duration)
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"angr cfg error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/angr/entry", methods=["POST"])
+def angr_entry():
+    """Get binary entry point and main symbol address for angr workflows."""
+    import time
+
+    start = time.time()
+    data = request.json or {}
+    binary = data.get("binary")
+
+    if not binary:
+        return jsonify({"error": "No binary specified"}), 400
+
+    binary_path = BINS_DIR / binary if not binary.startswith("/") else Path(binary)
+    if not binary_path.exists():
+        return jsonify({"error": f"Binary not found: {binary_path}"}), 404
+
+    try:
+        import angr
+
+        project, err = _angr_project(binary_path, timeout_sec=30)
+        if err:
+            return jsonify({"error": f"Failed to load binary: {err}"}), 500
+
+        entry = project.entry
+        main_addr = None
+        if hasattr(project.loader, "main_object") and project.loader.main_object:
+            sym = project.loader.main_object.get_symbol("main")
+            if sym:
+                main_addr = sym.rebased_addr
+
+        result = {
+            "binary": str(binary_path),
+            "entry_point": hex(entry),
+            "main": hex(main_addr) if main_addr is not None else None,
+        }
+        duration = (time.time() - start) * 1000
+        log_tool_call("angr_entry", {"binary": binary}, result, duration)
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"angr entry error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/angr/selftest", methods=["POST"])
+def angr_selftest():
+    """
+    Runtime self-test for angr availability and core workflows.
+    Compiles a tiny stdin-driven binary and validates entry + symbolic exploration.
+    """
+    start = time.time()
+    timeout = min((request.json or {}).get("timeout", 30), 120)
+
+    source = r"""
+    #include <stdio.h>
+    int main(void) {
+        int c = getchar();
+        if (c == 'A') { puts("WIN"); return 0; }
+        puts("LOSE");
+        return 1;
+    }
+    """
+
+    c_path = None
+    bin_path = None
+    try:
+        import angr
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".c", delete=False) as c_file:
+            c_file.write(source)
+            c_path = c_file.name
+        bin_path = c_path + ".bin"
+
+        # Build a tiny deterministic binary for analysis.
+        compile_result = subprocess.run(
+            ["gcc", "-O0", "-fno-pie", "-no-pie", c_path, "-o", bin_path],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if compile_result.returncode != 0:
+            result = {
+                "ok": False,
+                "error": "gcc failed",
+                "stdout": _truncate_text(compile_result.stdout),
+                "stderr": _truncate_text(compile_result.stderr),
+            }
+            log_tool_call("angr_selftest", {"timeout": timeout}, result, (time.time() - start) * 1000)
+            return jsonify(result), 500
+
+        project = angr.Project(bin_path, auto_load_libs=False)
+        state = project.factory.entry_state(stdin=angr.SimFile)
+        simgr = project.factory.simulation_manager(state)
+
+        timed_out = False
+        can_use_signals = threading.current_thread() is threading.main_thread()
+        if can_use_signals:
+            import signal
+
+            old_handler = signal.getsignal(signal.SIGALRM)
+
+            def _timeout_handler(signum, frame):
+                raise TimeoutError("angr selftest timeout")
+
+            try:
+                signal.signal(signal.SIGALRM, _timeout_handler)
+                signal.alarm(timeout)
+                simgr.explore(find=lambda s: b"WIN" in s.posix.dumps(1), n=1)
+            except TimeoutError:
+                timed_out = True
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, old_handler)
+        else:
+            simgr.explore(find=lambda s: b"WIN" in s.posix.dumps(1), n=1)
+
+        solution = None
+        if simgr.found:
+            try:
+                solution = simgr.found[0].posix.dumps(0).decode(errors="replace")
+            except Exception:
+                solution = "<binary>"
+
+        result = {
+            "ok": len(simgr.found) > 0 and not timed_out,
+            "timed_out": timed_out,
+            "entry_point": hex(project.entry),
+            "found_states": len(simgr.found),
+            "active_states": len(simgr.active),
+            "solution_stdin": solution,
+            "note": "Expected solution starts with 'A'",
+        }
+        log_tool_call("angr_selftest", {"timeout": timeout}, result, (time.time() - start) * 1000)
+        return jsonify(result)
+    except Exception as e:
+        result = {"ok": False, "error": str(e)}
+        log_tool_call("angr_selftest", {"timeout": timeout}, result, (time.time() - start) * 1000)
+        return jsonify(result), 500
+    finally:
+        for p in [c_path, bin_path]:
+            if p and os.path.exists(p):
+                with contextlib.suppress(Exception):
+                    os.unlink(p)
 
 
 if __name__ == "__main__":

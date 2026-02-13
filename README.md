@@ -44,6 +44,17 @@ Tools for prioritizing and understanding functions during autonomous analysis:
 - **`get_function_cfg_info`** - Get control flow metrics including basic block count, cyclomatic complexity, branch count, and complexity classification
 - **`search_functions_by_name`** - Fuzzy search for functions by substring
 
+### Angr Symbolic Execution & Autonomous Triage
+
+Headless symbolic execution and automated analysis pipelines:
+
+- **`angr_explore`** - Find stdin input that reaches a target address via symbolic execution
+- **`angr_cfg`** - Control flow graph (nodes, edges) from angr
+- **`angr_entry`** - Entry point and main symbol addresses
+- **`gdb_angr_selftest`** - Runtime health/self-test for angr loading + symbolic exploration
+- **`auto_triage`** - Run full triage pipeline (file_info, checksec, entropy, imports, strings) in one call
+- **`gdb_pe_info`** - PE (Windows) binary structure, sections, imports, exports
+
 ### Dynamic Analysis & Instrumentation
 
 Full runtime debugging via GDB/GEF Docker container with Frida instrumentation:
@@ -60,6 +71,16 @@ Full runtime debugging via GDB/GEF Docker container with Frida instrumentation:
 - **`gdb_got_plt`** - Inspect GOT/PLT entries
 - **`gdb_frida_instrument`** / **`gdb_frida_trace`** / **`gdb_frida_hook`** - Frida-based function tracing and hooking
 
+### Observability & Recap
+
+Visibility tools for understanding what happened during an analysis session:
+
+- **`gdb_get_telemetry`** - Recent MCP tool calls to the GDB server
+- **`gdb_get_command_telemetry`** - Subprocess command history with stdout/stderr snapshots
+- **`trajectory_log_llm_turn`** - Explicitly log assistant/user turns into trajectory
+- **`trajectory_assert_logging`** - Guardrail to verify minimum logging completeness
+- **`analysis_session_recap`** - Generate a markdown write-up including timeline, commands, and terminal snapshots
+
 ### Full Tool Categories
 
 | Category | Count | Examples |
@@ -72,6 +93,7 @@ Full runtime debugging via GDB/GEF Docker container with Frida instrumentation:
 | Dynamic Analysis (GDB) | 35+ | registers, memory, stepping, watchpoints, heap, vmmap, ROP gadgets |
 | Frida Instrumentation | 3 | instrument, trace, hook function calls |
 | Trajectory Recording | 7 | record, analyze, export analysis sessions |
+| Observability | 3 | tool telemetry, command telemetry, analysis recap |
 
 # Installation
 
@@ -152,15 +174,17 @@ Another MCP client that supports multiple models on the backend is [5ire](https:
 
 # Testing
 
-The project includes a comprehensive Python test suite with 181 tests.
+The project includes a comprehensive Python test suite with 199 tests.
 
 ## Running Tests
 
 ```bash
-# Install dev dependencies
-pip install -r requirements-dev.txt
+# With uv (recommended)
+uv pip install -e . -r requirements-dev.txt
+python -m pytest tests/ -v
 
-# Run all tests
+# Or with pip
+pip install -r requirements-dev.txt
 python -m pytest tests/ -v
 
 # Run just unit tests (fast)
@@ -176,20 +200,21 @@ python -m pytest tests/ --cov=bridge_mcp_ghidra --cov=trajectory_recorder --cov-
 ./scripts/check.sh --fix
 ```
 
-The test suite includes 181 tests covering:
+The test suite includes 199 tests covering:
 
-- **MCP Bridge (`test_bridge_mcp_ghidra.py`)** - 91 unit tests for all MCP tools with mocked HTTP responses
-- **Enhanced GDB Tools (`test_enhanced_gdb_tools.py`)** - 25 tests for registers, memory, stepping, watchpoints, Frida, ROP gadgets, etc.
+- **MCP Bridge (`test_bridge_mcp_ghidra.py`)** - 95+ unit tests for MCP tools with mocked HTTP responses
+- **Enhanced GDB Tools (`test_enhanced_gdb_tools.py`)** - 30+ tests for registers, memory, stepping, watchpoints, Frida, ROP gadgets, PE tools, angr tools, and autonomous triage.
 - **Integration Tests (`test_integration.py`)** - 20 tests for multi-tool workflows (triage, analysis, patching, error recovery)
-- **Trajectory Recorder (`test_trajectory_recorder.py`)** - 45 tests for recording, analysis, export, thread safety
+- **Trajectory Recorder (`test_trajectory_recorder.py`)** - 45+ tests for recording, analysis, export, thread safety, and LLM trace logging
 
 Tests mock HTTP responses so they run without live Ghidra/GDB instances.
 
 ## CI/CD
 
-GitHub Actions runs automatically on push/PR to main:
+GitHub Actions runs automatically on push/PR to main. **All checks must pass before merge** (configure "Merge Gate" as required status in branch protection):
+
 - Linting (ruff) and type checking (mypy)
-- Unit tests on Python 3.10, 3.11, 3.12
+- Unit tests on Python 3.10, 3.11, 3.12 (uv for dependency install)
 - Integration tests
 - Java/Maven Ghidra plugin build
 - Docker build validation
@@ -207,6 +232,7 @@ This enables automatic linting, formatting, and type checking on every commit.
 # Additional Documentation
 
 - **[AGENTS.md](AGENTS.md)** - Quick-start guide for AI agents working with this toolchain
+- **[docs/AGENT_OBSERVABILITY_INSTRUCTIONS.md](docs/AGENT_OBSERVABILITY_INSTRUCTIONS.md)** - Required logging SOP for agent traceability
 - **[CLAUDE_CODE_SETUP.md](CLAUDE_CODE_SETUP.md)** - Configuration guide for Claude Code CLI and macOS desktop app
 - **[docker/README.md](docker/README.md)** - Docker container setup and API reference
 

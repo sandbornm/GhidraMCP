@@ -99,6 +99,15 @@ class TrajectoryRecorder:
         "gdb_health": "system",
         "gdb_get_logs": "system",
         "gdb_get_telemetry": "system",
+        "gdb_get_command_telemetry": "system",
+        "analysis_session_recap": "system",
+        "trajectory_log_llm_turn": "system",
+        "trajectory_assert_logging": "system",
+        "auto_triage": "static_analysis",
+        "gdb_pe_info": "static_analysis",
+        "angr_explore": "dynamic_analysis",
+        "angr_cfg": "static_analysis",
+        "angr_entry": "static_analysis",
     }
 
     def __init__(self, output_dir: str = None, binary_name: str = None):
@@ -121,6 +130,7 @@ class TrajectoryRecorder:
 
         # Thread safety
         self._lock = threading.Lock()
+        self._call_index = 0
 
         # Session metadata
         self._write_session_start()
@@ -145,6 +155,12 @@ class TrajectoryRecorder:
         """Write an entry to the trajectory file."""
         with self._lock, open(self.session_file, "a") as f:
             f.write(json.dumps(entry) + "\n")
+
+    def _next_call_index(self) -> int:
+        """Get a monotonically increasing call index for traceability."""
+        with self._lock:
+            self._call_index += 1
+            return self._call_index
 
     def _extract_addresses(self, params: dict, result: Any) -> list:
         """Extract addresses mentioned in params or results."""
@@ -192,8 +208,12 @@ class TrajectoryRecorder:
             duration_ms: Execution time in milliseconds
             success: Whether the call succeeded
         """
+        call_index = self._next_call_index()
+        trace_id = f"{self.session_id}:{call_index}"
         entry = {
             "type": "tool_call",
+            "trace_id": trace_id,
+            "call_index": call_index,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "session_id": self.session_id,
             "binary": self.binary_name,
@@ -212,6 +232,30 @@ class TrajectoryRecorder:
             if len(result_str) < 10000:
                 entry["result"] = result_str
 
+        self._write_entry(entry)
+
+    def record_llm_turn(self, role: str, content: str, metadata: dict | None = None):
+        """
+        Record an LLM conversational turn for full auditability.
+
+        Args:
+            role: speaker role ("assistant", "user", "system", etc.)
+            content: turn text
+            metadata: optional structured metadata (model, token counts, etc.)
+        """
+        call_index = self._next_call_index()
+        trace_id = f"{self.session_id}:llm:{call_index}"
+        entry = {
+            "type": "llm_turn",
+            "trace_id": trace_id,
+            "call_index": call_index,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "session_id": self.session_id,
+            "binary": self.binary_name,
+            "role": role,
+            "content": content,
+            "metadata": metadata or {},
+        }
         self._write_entry(entry)
 
     def set_binary(self, binary_name: str):
@@ -278,8 +322,9 @@ def analyze_trajectory(trajectory_path: str) -> dict:
         for line in f:
             entries.append(json.loads(line))
 
-    # Filter to tool calls only
+    # Filter to tool/LLM calls
     tool_calls = [e for e in entries if e.get("type") == "tool_call"]
+    llm_turns = [e for e in entries if e.get("type") == "llm_turn"]
 
     # Statistics
     tool_counts: dict[str, int] = {}
@@ -329,6 +374,7 @@ def analyze_trajectory(trajectory_path: str) -> dict:
         "end_time": session_end.get("timestamp"),
         "session_duration_seconds": session_end.get("duration_seconds"),
         "total_tool_calls": len(tool_calls),
+        "total_llm_turns": len(llm_turns),
         "total_tool_duration_ms": round(total_duration, 2),
         "tool_counts": dict(sorted(tool_counts.items(), key=lambda x: -x[1])),
         "category_counts": dict(sorted(category_counts.items(), key=lambda x: -x[1])),
@@ -337,6 +383,7 @@ def analyze_trajectory(trajectory_path: str) -> dict:
         "patches_applied": patches,
         "errors": errors,
         "notes": [e for e in entries if e.get("type") == "note"],
+        "llm_turns": llm_turns,
     }
 
 
@@ -399,6 +446,18 @@ def export_trajectory_markdown(trajectory_path: str, output_path: str = None) ->
         for note in notes:
             ts = note.get("timestamp", "")[:19].replace("T", " ")
             md.append(f"- `{ts}` [{note.get('category')}] {note.get('note')}")
+
+    # LLM turns
+    llm_turns = [e for e in entries if e.get("type") == "llm_turn"]
+    if llm_turns:
+        md.append("\n## LLM Conversation Trace")
+        for turn in llm_turns:
+            ts = turn.get("timestamp", "")[:19].replace("T", " ")
+            role = turn.get("role", "unknown")
+            content = str(turn.get("content", ""))
+            if len(content) > 400:
+                content = content[:400] + "... [truncated]"
+            md.append(f"- `{ts}` **{role}**: {content}")
 
     markdown = "\n".join(md)
 

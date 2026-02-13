@@ -222,6 +222,19 @@ class TestNotes:
         notes = [e for e in entries if e["type"] == "note"]
         assert notes[0]["category"] == "observation"
 
+    def test_record_llm_turn(self, recorder):
+        recorder.record_llm_turn(
+            role="assistant",
+            content="The likely decryption routine is at 0x401234.",
+            metadata={"model": "test-model", "tokens": 42},
+        )
+        entries = _read_entries(recorder.get_session_path())
+        turns = [e for e in entries if e["type"] == "llm_turn"]
+        assert len(turns) == 1
+        assert turns[0]["role"] == "assistant"
+        assert "0x401234" in turns[0]["content"]
+        assert turns[0]["metadata"]["model"] == "test-model"
+
 
 # ===========================================================================
 # Tests for session management
@@ -322,6 +335,14 @@ class TestAnalyzeTrajectory:
         assert len(analysis["notes"]) == 1
         assert "interesting function" in analysis["notes"][0]["note"]
 
+    def test_llm_turns_included(self, recorder):
+        recorder.record("decompile_function", {"name": "main"}, "int main(){}", 10.0, True)
+        recorder.record_llm_turn("assistant", "Main calls validator()", {"tokens": 20})
+        recorder.end_session("done")
+        analysis = analyze_trajectory(str(recorder.get_session_path()))
+        assert len(analysis["llm_turns"]) == 1
+        assert analysis["llm_turns"][0]["role"] == "assistant"
+
     def test_session_duration(self, populated_trajectory):
         analysis = analyze_trajectory(str(populated_trajectory))
         assert analysis["session_duration_seconds"] is not None
@@ -365,6 +386,14 @@ class TestExportMarkdown:
         md = export_trajectory_markdown(str(populated_trajectory))
         assert "decompile_function" in md
         assert "patch_bytes" in md
+
+    def test_export_contains_llm_trace(self, recorder):
+        recorder.record("list_functions", {}, ["main"], 5.0, True)
+        recorder.record_llm_turn("assistant", "Found likely entrypoint.")
+        recorder.end_session("done")
+        md = export_trajectory_markdown(str(recorder.get_session_path()))
+        assert "LLM Conversation Trace" in md
+        assert "Found likely entrypoint" in md
 
 
 # ===========================================================================

@@ -461,6 +461,18 @@ class TestEnhancedGDBEndpointRouting:
         bridge_mcp_ghidra.gdb_search_pattern(binary="t", pattern="test")
         assert mock_gdb.call_args[0][0] == "/gdb/search_pattern"
 
+        bridge_mcp_ghidra.gdb_pe_info(binary="t")
+        assert mock_gdb.call_args[0][0] == "/pe/info"
+
+        bridge_mcp_ghidra.angr_explore(binary="t", find_addr="0x401000")
+        assert mock_gdb.call_args[0][0] == "/angr/explore"
+
+        bridge_mcp_ghidra.angr_cfg(binary="t")
+        assert mock_gdb.call_args[0][0] == "/angr/cfg"
+
+        bridge_mcp_ghidra.angr_entry(binary="t")
+        assert mock_gdb.call_args[0][0] == "/angr/entry"
+
 
 # ===========================================================================
 # Tests for Error Handling on New Tools
@@ -487,6 +499,10 @@ class TestEnhancedToolErrors:
         assert "error" in bridge_mcp_ghidra.gdb_frida_hook(binary="t", target="x")
         assert "error" in bridge_mcp_ghidra.gdb_vmmap(binary="t")
         assert "error" in bridge_mcp_ghidra.gdb_search_pattern(binary="t", pattern="x")
+        assert "error" in bridge_mcp_ghidra.gdb_pe_info(binary="t")
+        assert "error" in bridge_mcp_ghidra.angr_explore(binary="t", find_addr="0x401000")
+        assert "error" in bridge_mcp_ghidra.angr_cfg(binary="t")
+        assert "error" in bridge_mcp_ghidra.angr_entry(binary="t")
 
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_new_tools_handle_binary_not_found(self, mock_gdb):
@@ -496,3 +512,122 @@ class TestEnhancedToolErrors:
         result = bridge_mcp_ghidra.gdb_read_registers(binary="missing")
         assert "error" in result
         assert "not found" in result["error"].lower()
+
+
+# ===========================================================================
+# Tests for PE, Angr, and Auto-Triage Tools
+# ===========================================================================
+
+
+class TestPETools:
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_gdb_pe_info(self, mock_gdb):
+        mock_gdb.return_value = {
+            "binary": "/analysis/bins/sample.exe",
+            "format": "PE",
+            "machine_type": "amd64",
+            "sections": [{"name": ".text", "virtual_address": "0x1000"}],
+            "imports": [{"dll": "kernel32.dll", "name": "CreateFileA"}],
+        }
+        result = bridge_mcp_ghidra.gdb_pe_info(binary="sample.exe")
+        assert result["format"] == "PE"
+        assert "imports" in result
+        mock_gdb.assert_called_with("/pe/info", "POST", {"binary": "sample.exe"})
+
+
+class TestAngrTools:
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_angr_explore(self, mock_gdb):
+        mock_gdb.return_value = {
+            "found": True,
+            "stdin_solution": "flag{test}",
+            "reached_addr": "0x401050",
+        }
+        result = bridge_mcp_ghidra.angr_explore(binary="crackme", find_addr="0x401050")
+        assert result["found"] is True
+        assert "flag" in result["stdin_solution"]
+        mock_gdb.assert_called_with(
+            "/angr/explore",
+            "POST",
+            {"binary": "crackme", "find_addr": "0x401050", "timeout": 120, "stdin_symbolic": True},
+        )
+
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_angr_explore_with_avoid(self, mock_gdb):
+        mock_gdb.return_value = {"found": False}
+        bridge_mcp_ghidra.angr_explore(
+            binary="crackme", find_addr="0x401050", avoid_addrs=["0x401000"], timeout=60
+        )
+        call_data = mock_gdb.call_args[0][2]
+        assert call_data["avoid_addrs"] == ["0x401000"]
+        assert call_data["timeout"] == 60
+
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_angr_cfg(self, mock_gdb):
+        mock_gdb.return_value = {"node_count": 42, "edge_count": 50, "nodes": [], "edges": []}
+        result = bridge_mcp_ghidra.angr_cfg(binary="sample")
+        assert result["node_count"] == 42
+        mock_gdb.assert_called_with("/angr/cfg", "POST", {"binary": "sample", "timeout": 60})
+
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_angr_entry(self, mock_gdb):
+        mock_gdb.return_value = {"entry_point": "0x401000", "main": "0x401050"}
+        result = bridge_mcp_ghidra.angr_entry(binary="sample")
+        assert result["entry_point"] == "0x401000"
+        assert result["main"] == "0x401050"
+
+
+class TestAutoTriage:
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_auto_triage_elf(self, mock_gdb):
+        def side_effect(endpoint, method="GET", data=None):
+            if endpoint == "/file_info":
+                return {"architecture": "x86_64", "format": "ELF", "bits": 64, "is_pie": True}
+            if endpoint == "/checksec":
+                return {"nx": True, "pie": True, "relro": "Full", "canary": True}
+            if endpoint == "/entropy":
+                return {"likely_packed": False, "overall_entropy": 5.2}
+            if endpoint == "/imports":
+                return {"imports": ["printf", "malloc", "strcmp"]}
+            if endpoint == "/strings":
+                return {"strings": ["flag{test}", "password", "admin"]}
+            return {"error": "unknown"}
+
+        mock_gdb.side_effect = side_effect
+
+        result = bridge_mcp_ghidra.auto_triage(binary="chall", include_strings=True)
+        assert result["architecture"] == "x86_64"
+        assert result["format"] == "ELF"
+        assert result["likely_packed"] is False
+        assert len(result["imports"]) == 3
+        assert "flag" in str(result["strings_sample"])
+        assert "summary" in result
+
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_auto_triage_pe(self, mock_gdb):
+        def side_effect(endpoint, method="GET", data=None):
+            if endpoint == "/file_info":
+                return {"architecture": "amd64", "format": "PE", "bits": 64}
+            if endpoint == "/checksec":
+                return {"nx": True}
+            if endpoint == "/entropy":
+                return {"likely_packed": False}
+            if endpoint == "/pe/info":
+                return {"imports": [{"dll": "kernel32", "name": "CreateFile"}]}
+            if endpoint == "/strings":
+                return {"strings": ["hello"]}
+            return {"error": "unknown"}
+
+        mock_gdb.side_effect = side_effect
+
+        result = bridge_mcp_ghidra.auto_triage(binary="sample.exe")
+        assert result["format"] == "PE"
+        assert "imports" in result
+
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_auto_triage_handles_errors(self, mock_gdb):
+        mock_gdb.return_value = {"error": "Connection refused"}
+        result = bridge_mcp_ghidra.auto_triage(binary="chall")
+        assert "errors" in result
+        assert len(result["errors"]) > 0
+        assert "summary" in result

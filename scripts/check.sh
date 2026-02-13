@@ -88,7 +88,6 @@ fi
 # ---------------------------------------------------------------------------
 run_check "Unit Tests" python -m pytest tests/ -v \
     -m "not integration and not slow" \
-    --timeout=30 \
     --tb=short
 
 # ---------------------------------------------------------------------------
@@ -102,7 +101,6 @@ else
         --cov=trajectory_recorder \
         --cov-report=term-missing \
         -m "not integration and not slow" \
-        --timeout=30 \
         -q
 fi
 

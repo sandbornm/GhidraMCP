@@ -1528,6 +1528,214 @@ def gdb_get_telemetry(lines: int = 100) -> dict:
     return gdb_request(f"/telemetry?lines={lines}")
 
 
+@mcp.tool()
+@recorded_tool
+def gdb_get_command_telemetry(lines: int = 100) -> dict:
+    """
+    Get subprocess command telemetry from the GDB server.
+    Includes executed commands, return codes, durations, and output snapshots.
+
+    Args:
+        lines: Number of recent command entries to retrieve (default: 100)
+
+    Returns:
+        Dict with command telemetry entries
+    """
+    return gdb_request(f"/command_telemetry?lines={lines}")
+
+
+# =============================================================================
+# PE (Windows) BINARY ANALYSIS
+# =============================================================================
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_pe_info(binary: str) -> dict:
+    """
+    Get PE (Windows) binary structure: headers, sections, imports, exports.
+    Use for Windows executables (.exe, .dll). For ELF binaries use gdb_sections.
+
+    Args:
+        binary: Name of the PE binary (must be uploaded to container)
+
+    Returns:
+        Dict with machine type, sections, imports, exports, entry point
+    """
+    return gdb_request("/pe/info", "POST", {"binary": binary})
+
+
+# =============================================================================
+# ANGR SYMBOLIC EXECUTION (headless)
+# =============================================================================
+
+
+@mcp.tool()
+@recorded_tool
+def angr_explore(binary: str, find_addr: str, avoid_addrs: list = None, timeout: int = 120, stdin_symbolic: bool = True) -> dict:
+    """
+    Symbolic execution: find input that reaches a target address.
+    Uses angr to explore paths and extract stdin that reaches find_addr.
+
+    Args:
+        binary: Name of the binary (must be uploaded to container)
+        find_addr: Target address to reach (hex, e.g. "0x401234")
+        avoid_addrs: Addresses to avoid during exploration (optional)
+        timeout: Max exploration time in seconds (default: 120, max: 300)
+        stdin_symbolic: Use symbolic stdin (default: True)
+
+    Returns:
+        Dict with found status, stdin_solution if found, and stash counts
+
+    Example:
+        angr_explore("crackme", "0x401050")  # Find input reaching success path
+    """
+    data = {"binary": binary, "find_addr": find_addr, "timeout": timeout, "stdin_symbolic": stdin_symbolic}
+    if avoid_addrs:
+        data["avoid_addrs"] = avoid_addrs
+    return gdb_request("/angr/explore", "POST", data)
+
+
+@mcp.tool()
+@recorded_tool
+def angr_cfg(binary: str, timeout: int = 60) -> dict:
+    """
+    Get control flow graph from angr: basic blocks and edges.
+    Lightweight CFG analysis for understanding binary structure.
+
+    Args:
+        binary: Name of the binary (must be uploaded to container)
+        timeout: CFG analysis timeout in seconds (default: 60)
+
+    Returns:
+        Dict with nodes (addr, size) and edges (from, to)
+    """
+    return gdb_request("/angr/cfg", "POST", {"binary": binary, "timeout": timeout})
+
+
+@mcp.tool()
+@recorded_tool
+def angr_entry(binary: str) -> dict:
+    """
+    Get binary entry point and main symbol address for angr workflows.
+    Use before angr_explore to identify targets.
+
+    Args:
+        binary: Name of the binary (must be uploaded to container)
+
+    Returns:
+        Dict with entry_point and main addresses
+    """
+    return gdb_request("/angr/entry", "POST", {"binary": binary})
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_angr_selftest(timeout: int = 30) -> dict:
+    """
+    Run angr runtime self-test inside the GDB container.
+    Validates angr import, project loading, and symbolic exploration flow.
+
+    Args:
+        timeout: Self-test timeout in seconds (default: 30, max enforced by server)
+
+    Returns:
+        Dict with ok/timed_out/found_states and a sample symbolic stdin solution.
+    """
+    return gdb_request("/angr/selftest", "POST", {"timeout": timeout})
+
+
+# =============================================================================
+# AUTONOMOUS RE TOOLS
+# =============================================================================
+
+
+@mcp.tool()
+@recorded_tool
+def auto_triage(binary: str, include_strings: bool = True, string_filter: str = None) -> dict:
+    """
+    Run an autonomous triage pipeline on a binary.
+    Chains file_info, checksec, entropy, imports, and optionally strings
+    into a single call. Use for rapid initial assessment.
+
+    Args:
+        binary: Name of the binary (must be uploaded to container)
+        include_strings: Include string extraction (default: True)
+        string_filter: Optional filter for strings (e.g. "flag", "password")
+
+    Returns:
+        Consolidated dict with architecture, mitigations, entropy, imports,
+        format (ELF/PE), and notable strings. Errors for individual steps
+        are captured without failing the whole pipeline.
+    """
+    result = {"binary": binary, "steps": {}, "summary": ""}
+    errors = []
+
+    # 1. File info
+    fi = gdb_request("/file_info", "POST", {"binary": binary})
+    if "error" in fi:
+        errors.append(f"file_info: {fi['error']}")
+    else:
+        result["steps"]["file_info"] = fi
+        result["architecture"] = fi.get("architecture", "unknown")
+        result["format"] = fi.get("format", "unknown")
+        result["bits"] = fi.get("bits")
+        result["is_pie"] = fi.get("is_pie")
+
+    # 2. Checksec
+    cs = gdb_request("/checksec", "POST", {"binary": binary})
+    if "error" in cs:
+        errors.append(f"checksec: {cs['error']}")
+    else:
+        result["steps"]["checksec"] = cs
+        result["mitigations"] = {k: cs.get(k) for k in ("nx", "pie", "relro", "canary") if k in cs}
+
+    # 3. Entropy
+    ent = gdb_request("/entropy", "POST", {"binary": binary})
+    if "error" in ent:
+        errors.append(f"entropy: {ent['error']}")
+    else:
+        result["steps"]["entropy"] = ent
+        result["likely_packed"] = ent.get("likely_packed", False)
+        result["overall_entropy"] = ent.get("overall_entropy")
+
+    # 4. Imports or PE info
+    if result.get("format") == "PE":
+        pe = gdb_request("/pe/info", "POST", {"binary": binary})
+        if "error" in pe:
+            errors.append(f"pe_info: {pe['error']}")
+        else:
+            result["steps"]["pe_info"] = pe
+            result["imports"] = [f"{i.get('dll','')}!{i.get('name', i.get('ordinal',''))}" for i in pe.get("imports", [])[:50]]
+    else:
+        imp = gdb_request("/imports", "POST", {"binary": binary})
+        if "error" in imp:
+            errors.append(f"imports: {imp['error']}")
+        else:
+            result["steps"]["imports"] = imp
+            result["imports"] = imp.get("imports", [])[:50]
+
+    # 5. Strings (optional)
+    if include_strings:
+        st = gdb_request("/strings", "POST", {"binary": binary, "min_length": 6})
+        if "error" in st:
+            errors.append(f"strings: {st['error']}")
+        else:
+            result["steps"]["strings"] = st
+            all_strs = st.get("strings", [])
+            if string_filter:
+                all_strs = [s for s in all_strs if string_filter.lower() in s.lower()]
+            result["strings_sample"] = all_strs[:30]
+
+    result["errors"] = errors
+    result["summary"] = (
+        f"{result.get('format', '?')} {result.get('architecture', '?')} "
+        f"| packed={result.get('likely_packed', '?')} "
+        f"| imports={len(result.get('imports', []))}"
+    )
+    return result
+
+
 # =============================================================================
 # ENHANCED DYNAMIC ANALYSIS TOOLS (Registers, Memory, Frida, etc.)
 # =============================================================================
@@ -2091,6 +2299,36 @@ def trajectory_note(note: str, category: str = "observation") -> dict:
 
 
 @mcp.tool()
+def trajectory_log_llm_turn(role: str, content: str, metadata_json: str = "") -> dict:
+    """
+    Record an LLM turn (assistant/user/system) in the active trajectory.
+    Use this for end-to-end traceability of prompts and responses.
+
+    Args:
+        role: Speaker role ("assistant", "user", "system", etc.)
+        content: Turn text content
+        metadata_json: Optional JSON string with metadata (model, token usage, etc.)
+
+    Returns:
+        Confirmation of turn logging
+    """
+    global trajectory_recorder
+
+    if not trajectory_recorder:
+        return {"error": "No active recording session. Call trajectory_start() first."}
+
+    metadata: dict[str, Any] = {}
+    if metadata_json:
+        try:
+            metadata = cast(dict[str, Any], json.loads(metadata_json))
+        except Exception as e:
+            return {"error": f"Invalid metadata_json: {e}"}
+
+    trajectory_recorder.record_llm_turn(role=role, content=content, metadata=metadata)
+    return {"status": "llm_turn_logged", "role": role, "content_length": len(content)}
+
+
+@mcp.tool()
 def trajectory_status() -> dict:
     """
     Get the status of the current trajectory recording session.
@@ -2103,12 +2341,50 @@ def trajectory_status() -> dict:
     if not trajectory_recorder:
         return {"recording": False, "message": "No active session"}
 
-    return {
+    status = {
         "recording": True,
         "session_id": trajectory_recorder.session_id,
         "binary": trajectory_recorder.binary_name,
         "output_path": str(trajectory_recorder.get_session_path()),
         "started": trajectory_recorder.start_time.isoformat(),
+    }
+    # Lightweight visibility signal so agents can verify that narrative logging is happening.
+    try:
+        analysis = analyze_trajectory(str(trajectory_recorder.get_session_path()))
+        status["total_tool_calls"] = analysis.get("total_tool_calls", 0)
+        status["total_llm_turns"] = analysis.get("total_llm_turns", 0)
+    except Exception:
+        pass
+    return status
+
+
+@mcp.tool()
+def trajectory_assert_logging(min_llm_turns: int = 1, min_tool_calls: int = 1) -> dict:
+    """
+    Enforce minimum logging completeness for the active trajectory session.
+    Useful as a guardrail for agent workflows before ending sessions.
+
+    Args:
+        min_llm_turns: Minimum required LLM turns (default: 1)
+        min_tool_calls: Minimum required tool calls (default: 1)
+
+    Returns:
+        Pass/fail dict with current counts
+    """
+    global trajectory_recorder
+    if not trajectory_recorder:
+        return {"error": "No active recording session. Call trajectory_start() first."}
+
+    analysis = analyze_trajectory(str(trajectory_recorder.get_session_path()))
+    llm_turns = int(analysis.get("total_llm_turns", 0))
+    tool_calls = int(analysis.get("total_tool_calls", 0))
+    ok = llm_turns >= min_llm_turns and tool_calls >= min_tool_calls
+
+    return {
+        "ok": ok,
+        "required": {"min_llm_turns": min_llm_turns, "min_tool_calls": min_tool_calls},
+        "observed": {"total_llm_turns": llm_turns, "total_tool_calls": tool_calls},
+        "message": "logging requirements satisfied" if ok else "logging requirements not met",
     }
 
 
@@ -2184,6 +2460,138 @@ def trajectory_list() -> dict:
             trajectories.append({"filename": f.name, "path": str(f), "error": "Could not parse"})
 
     return {"trajectories": trajectories, "directory": str(trajectory_dir)}
+
+
+def _resolve_trajectory_path(trajectory_path: str | None) -> str | None:
+    """Resolve a trajectory path, defaulting to the most recent session."""
+    if trajectory_path:
+        return trajectory_path
+
+    listed = trajectory_list()
+    trajectories = listed.get("trajectories", [])
+    if not trajectories:
+        return None
+
+    latest = trajectories[0]
+    return latest.get("path")
+
+
+@mcp.tool()
+def analysis_session_recap(
+    trajectory_path: str | None = None,
+    output_path: str | None = None,
+    include_command_telemetry: bool = True,
+    command_lines: int = 100,
+    max_terminal_snapshots: int = 12,
+    require_llm_turns: bool = False,
+) -> dict:
+    """
+    Generate a full-session recap/write-up for reverse engineering work.
+    The recap includes tool usage stats, timeline, command history, and
+    terminal-like output snapshots from command telemetry.
+
+    Args:
+        trajectory_path: Optional path to a trajectory JSONL file.
+            If omitted, uses the most recent trajectory.
+        output_path: Optional path to save markdown recap.
+        include_command_telemetry: Include GDB command history/snapshots.
+        command_lines: How many command telemetry entries to load.
+        max_terminal_snapshots: Max number of command snapshots in recap.
+        require_llm_turns: If true, fail recap when no LLM turns are logged.
+
+    Returns:
+        Dict with markdown recap and metadata (and output path if saved).
+    """
+    resolved_path = _resolve_trajectory_path(trajectory_path)
+    if not resolved_path:
+        return {
+            "error": "No trajectory available. Start recording with trajectory_start() first.",
+        }
+
+    try:
+        analysis = analyze_trajectory(resolved_path)
+        base_md = export_trajectory_markdown(resolved_path)
+    except Exception as e:
+        return {"error": f"Failed to load trajectory: {e}"}
+
+    md_lines = [base_md]
+    md_lines.append("\n## Recap")
+    md_lines.append(
+        f"- Binary: `{analysis.get('binary', 'unknown')}` | "
+        f"Calls: `{analysis.get('total_tool_calls', 0)}` | "
+        f"LLM turns: `{analysis.get('total_llm_turns', 0)}` | "
+        f"Duration(ms): `{analysis.get('total_tool_duration_ms', 0)}`"
+    )
+    warnings: list[str] = []
+
+    if analysis.get("total_llm_turns", 0) == 0:
+        warning = "No LLM turns were logged. Recap will contain tool traces only."
+        warnings.append(warning)
+        md_lines.append(f"- WARNING: {warning}")
+        if require_llm_turns:
+            return {
+                "error": warning,
+                "trajectory_path": resolved_path,
+                "binary": analysis.get("binary"),
+                "total_tool_calls": analysis.get("total_tool_calls"),
+                "total_llm_turns": analysis.get("total_llm_turns", 0),
+            }
+
+    if include_command_telemetry:
+        cmd_data = gdb_get_command_telemetry(lines=command_lines)
+        commands = cmd_data.get("commands", []) if isinstance(cmd_data, dict) else []
+
+        md_lines.append("\n## Command History")
+        if not commands:
+            md_lines.append("- No command telemetry entries available.")
+        else:
+            md_lines.append("| Time | Tool | Return | Duration(ms) | Command |")
+            md_lines.append("|------|------|--------|--------------|---------|")
+            for entry in commands[-max_terminal_snapshots:]:
+                ts = str(entry.get("timestamp", ""))[:19].replace("T", " ")
+                tool = entry.get("tool", "unknown")
+                rc = entry.get("returncode", "n/a")
+                dur = entry.get("duration_ms", "n/a")
+                cmd = str(entry.get("command", "")).replace("|", "\\|")
+                md_lines.append(f"| {ts} | {tool} | {rc} | {dur} | `{cmd}` |")
+
+            md_lines.append("\n## Terminal Snapshots")
+            for idx, entry in enumerate(commands[-max_terminal_snapshots:], 1):
+                md_lines.append(
+                    f"\n### Snapshot {idx}: `{entry.get('tool', 'unknown')}` → "
+                    f"`{entry.get('command', '')}`"
+                )
+                stdout_tail = entry.get("stdout_tail", "") or ""
+                stderr_tail = entry.get("stderr_tail", "") or ""
+                if stdout_tail:
+                    md_lines.append("\n**stdout**")
+                    md_lines.append(f"```text\n{stdout_tail}\n```")
+                if stderr_tail:
+                    md_lines.append("\n**stderr**")
+                    md_lines.append(f"```text\n{stderr_tail}\n```")
+                if not stdout_tail and not stderr_tail:
+                    md_lines.append("_No output captured for this command._")
+
+    markdown = "\n".join(md_lines)
+    result = {
+        "trajectory_path": resolved_path,
+        "binary": analysis.get("binary"),
+        "total_tool_calls": analysis.get("total_tool_calls"),
+        "total_llm_turns": analysis.get("total_llm_turns", 0),
+        "warnings": warnings,
+        "markdown": markdown,
+    }
+
+    if output_path:
+        try:
+            with open(output_path, "w") as f:
+                f.write(markdown)
+            result["output_path"] = output_path
+            result["status"] = "exported"
+        except Exception as e:
+            result["output_error"] = str(e)
+
+    return result
 
 
 def main():

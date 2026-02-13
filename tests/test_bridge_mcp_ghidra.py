@@ -656,6 +656,20 @@ class TestGDBTools:
         result = bridge_mcp_ghidra.gdb_health()
         assert "error" in result
 
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_gdb_get_command_telemetry(self, mock_req):
+        mock_req.return_value = {"commands": [{"tool": "gdb_command"}], "total": 1}
+        result = bridge_mcp_ghidra.gdb_get_command_telemetry(lines=10)
+        assert result["total"] == 1
+        mock_req.assert_called_with("/command_telemetry?lines=10")
+
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_gdb_angr_selftest(self, mock_req):
+        mock_req.return_value = {"ok": True, "found_states": 1}
+        result = bridge_mcp_ghidra.gdb_angr_selftest(timeout=20)
+        assert result["ok"] is True
+        mock_req.assert_called_with("/angr/selftest", "POST", {"timeout": 20})
+
 
 # ===========================================================================
 # Tests for gdb_request helper
@@ -766,6 +780,85 @@ class TestTrajectoryTools:
     def test_trajectory_note_no_session(self):
         result = bridge_mcp_ghidra.trajectory_note(note="test")
         assert "error" in result
+
+    def test_trajectory_log_llm_turn_no_session(self):
+        bridge_mcp_ghidra.trajectory_recorder = None
+        result = bridge_mcp_ghidra.trajectory_log_llm_turn(role="assistant", content="test")
+        assert "error" in result
+
+    def test_trajectory_log_llm_turn_success(self):
+        mock_recorder = MagicMock()
+        bridge_mcp_ghidra.trajectory_recorder = mock_recorder
+        result = bridge_mcp_ghidra.trajectory_log_llm_turn(
+            role="assistant",
+            content="Found candidate function.",
+            metadata_json='{"model":"claude","tokens":123}',
+        )
+        assert result["status"] == "llm_turn_logged"
+        mock_recorder.record_llm_turn.assert_called_once()
+        bridge_mcp_ghidra.trajectory_recorder = None
+
+    @patch("bridge_mcp_ghidra.analyze_trajectory")
+    def test_trajectory_assert_logging(self, mock_analyze):
+        mock_recorder = MagicMock()
+        mock_recorder.get_session_path.return_value = "/tmp/session.jsonl"
+        bridge_mcp_ghidra.trajectory_recorder = mock_recorder
+        mock_analyze.return_value = {"total_tool_calls": 5, "total_llm_turns": 2}
+
+        result = bridge_mcp_ghidra.trajectory_assert_logging(min_llm_turns=1, min_tool_calls=1)
+        assert result["ok"] is True
+        bridge_mcp_ghidra.trajectory_recorder = None
+
+    @patch("bridge_mcp_ghidra.gdb_get_command_telemetry")
+    @patch("bridge_mcp_ghidra.export_trajectory_markdown")
+    @patch("bridge_mcp_ghidra.analyze_trajectory")
+    @patch("bridge_mcp_ghidra.trajectory_list")
+    def test_analysis_session_recap(self, mock_list, mock_analyze, mock_export, mock_cmd):
+        mock_list.return_value = {"trajectories": [{"path": "/tmp/test.jsonl"}]}
+        mock_analyze.return_value = {
+            "binary": "sample.exe",
+            "total_tool_calls": 5,
+            "total_llm_turns": 1,
+            "total_tool_duration_ms": 123.4,
+        }
+        mock_export.return_value = "# Base Report"
+        mock_cmd.return_value = {
+            "commands": [
+                {
+                    "timestamp": "2026-01-01T00:00:00",
+                    "tool": "gdb_command",
+                    "returncode": 0,
+                    "duration_ms": 10,
+                    "command": "strings /analysis/bins/sample.exe",
+                    "stdout_tail": "flag{test}",
+                    "stderr_tail": "",
+                }
+            ]
+        }
+
+        result = bridge_mcp_ghidra.analysis_session_recap()
+        assert result["binary"] == "sample.exe"
+        assert "Command History" in result["markdown"]
+        assert "Terminal Snapshots" in result["markdown"]
+
+    @patch("bridge_mcp_ghidra.gdb_get_command_telemetry")
+    @patch("bridge_mcp_ghidra.export_trajectory_markdown")
+    @patch("bridge_mcp_ghidra.analyze_trajectory")
+    @patch("bridge_mcp_ghidra.trajectory_list")
+    def test_analysis_session_recap_requires_llm_turns(self, mock_list, mock_analyze, mock_export, mock_cmd):
+        mock_list.return_value = {"trajectories": [{"path": "/tmp/test.jsonl"}]}
+        mock_analyze.return_value = {
+            "binary": "sample.exe",
+            "total_tool_calls": 5,
+            "total_llm_turns": 0,
+            "total_tool_duration_ms": 123.4,
+        }
+        mock_export.return_value = "# Base Report"
+        mock_cmd.return_value = {"commands": []}
+
+        result = bridge_mcp_ghidra.analysis_session_recap(require_llm_turns=True)
+        assert "error" in result
+        assert "No LLM turns were logged" in result["error"]
 
 
 # ===========================================================================

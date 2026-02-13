@@ -74,6 +74,8 @@ RUN pip3 install --no-cache-dir \
     # Additional analysis
     angr \
     archinfo \
+    # PE (Windows) binary parsing
+    pefile \
     # Hex/byte manipulation
     hexdump
 
@@ -95,6 +97,15 @@ RUN chown analyst:analyst /analysis/gdb_server.py
 # 1234 - gdbserver remote debugging
 # 27042 - Frida server
 EXPOSE 5000 1234 27042
+
+# Optional: Install wine for Windows PE execution (uncomment if needed)
+# RUN apt-get update && apt-get install -y wine64 && rm -rf /var/lib/apt/lists/*
+# Note: QEMU user-mode emulates Linux binaries across arches. For Windows PE,
+# use Wine (above) or full QEMU system emulation with a Windows VM.
+
+# Healthcheck for container robustness
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -sf http://localhost:5000/health || exit 1
 
 # Note: Running as root for now because GDB/strace need elevated privileges
 # For maximum security, uncomment USER line and use sudo where needed
