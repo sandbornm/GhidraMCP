@@ -98,6 +98,7 @@ Quick-start guide for AI agents (Claude, GPT, etc.) working with this reverse en
 
 **Tracing & instrumentation:**
 - `gdb_strace(binary)` / `gdb_ltrace(binary)` — syscall/library tracing
+- `gdb_capture_pcap(interface, duration, filter)` / `gdb_analyze_pcap(pcap, display_filter)` / `gdb_list_pcaps()` — packet capture and network traffic analysis
 - `gdb_frida_instrument(binary, script)` — run Frida JS script
 - `gdb_frida_trace(binary, functions)` — trace function calls with Frida
 - `gdb_frida_hook(binary, target, on_enter, on_leave)` — intercept functions

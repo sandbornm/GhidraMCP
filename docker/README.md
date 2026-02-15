@@ -28,6 +28,10 @@ Docker container providing a full x86-64 Linux environment for dynamic analysis,
   - Arbitrary JS instrumentation scripts
   - Function call tracing
   - Function hooking with onEnter/onLeave callbacks
+- **Packet capture analysis** - `tcpdump` + `tshark` for network traffic inspection
+  - Capture live traffic to `.pcap` files
+  - Protocol hierarchy, conversations, and endpoint summaries
+  - CSV packet previews with protocol/length metadata
 
 ### Libraries Available
 - `pyelftools`, `lief` - ELF/binary parsing
@@ -81,6 +85,9 @@ docker-compose down
 |------|-------------|
 | `gdb_strace(binary)` | Trace system calls |
 | `gdb_ltrace(binary)` | Trace library calls |
+| `gdb_capture_pcap(interface, duration, filter)` | Capture network traffic to PCAP |
+| `gdb_analyze_pcap(pcap, display_filter)` | Analyze PCAP with tshark summaries |
+| `gdb_list_pcaps()` | List saved packet captures |
 | `gdb_frida_instrument(binary, script)` | Run Frida JS instrumentation |
 | `gdb_frida_trace(binary, functions)` | Trace function calls via Frida |
 | `gdb_frida_hook(binary, target, on_enter)` | Hook functions with callbacks |
@@ -141,6 +148,9 @@ docker-compose down
 |----------|--------|-------------|
 | `/strace` | POST | System call trace |
 | `/ltrace` | POST | Library call trace |
+| `/pcap/list` | GET | List saved PCAP files |
+| `/pcap/capture` | POST | Capture live traffic with tcpdump |
+| `/pcap/analyze` | POST | Analyze PCAP via tshark summaries |
 | `/frida/attach` | POST | Run Frida script |
 | `/frida/trace` | POST | Trace functions with Frida |
 | `/frida/hook` | POST | Hook function with Frida |

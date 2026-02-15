@@ -20,9 +20,11 @@ services:
       # Mount logs directory for telemetry
       - ./logs:/analysis/logs
     restart: unless-stopped
-    # Required for debugging (GDB, strace, ltrace)
+    # Required for debugging + packet capture (GDB, strace, ltrace, tcpdump)
     cap_add:
       - SYS_PTRACE
+      - NET_ADMIN
+      - NET_RAW
     security_opt:
       - seccomp:unconfined
     # Resource limits to prevent fork bombs, memory exhaustion

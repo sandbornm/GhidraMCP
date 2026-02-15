@@ -28,6 +28,8 @@ RUN apt-get update && apt-get install -y \
     wget \
     netcat-openbsd \
     socat \
+    tcpdump \
+    tshark \
     # Utilities
     tmux \
     vim \
@@ -74,6 +76,8 @@ RUN pip3 install --no-cache-dir \
     # Additional analysis
     angr \
     archinfo \
+    # Packet capture parsing
+    scapy \
     # PE (Windows) binary parsing
     pefile \
     # Hex/byte manipulation
@@ -83,6 +87,7 @@ RUN pip3 install --no-cache-dir \
 RUN useradd -m -s /bin/bash analyst && \
     mkdir -p /analysis/bins && \
     mkdir -p /analysis/logs && \
+    mkdir -p /analysis/pcaps && \
     mkdir -p /analysis/frida_scripts && \
     chown -R analyst:analyst /analysis
 

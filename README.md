@@ -69,6 +69,7 @@ Full runtime debugging via GDB/GEF Docker container with Frida instrumentation:
 - **`gdb_search_pattern`** - Search for patterns in process memory
 - **`gdb_rop_gadgets`** - Find ROP gadgets for exploit development
 - **`gdb_got_plt`** - Inspect GOT/PLT entries
+- **`gdb_capture_pcap`** / **`gdb_analyze_pcap`** / **`gdb_list_pcaps`** - Capture and analyze network traffic PCAPs with tcpdump/tshark
 - **`gdb_frida_instrument`** / **`gdb_frida_trace`** / **`gdb_frida_hook`** - Frida-based function tracing and hooking
 
 ### Observability & Recap

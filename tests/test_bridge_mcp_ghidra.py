@@ -651,6 +651,50 @@ class TestGDBTools:
         assert result["nx"] is True
 
     @patch("bridge_mcp_ghidra.gdb_request")
+    def test_gdb_list_pcaps(self, mock_req):
+        mock_req.return_value = {"pcaps": [{"name": "capture_1.pcap"}]}
+        result = bridge_mcp_ghidra.gdb_list_pcaps()
+        assert result["pcaps"][0]["name"] == "capture_1.pcap"
+        mock_req.assert_called_with("/pcap/list")
+
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_gdb_capture_pcap(self, mock_req):
+        mock_req.return_value = {"capture_file": "/analysis/pcaps/capture.pcap", "size_bytes": 128}
+        result = bridge_mcp_ghidra.gdb_capture_pcap(interface="any", duration=5, filter="tcp port 80")
+        assert result["capture_file"].endswith(".pcap")
+        mock_req.assert_called_with(
+            "/pcap/capture",
+            "POST",
+            {
+                "interface": "any",
+                "duration": 5,
+                "packet_count": None,
+                "filter": "tcp port 80",
+                "output": None,
+                "snaplen": 0,
+            },
+        )
+
+    @patch("bridge_mcp_ghidra.gdb_request")
+    def test_gdb_analyze_pcap(self, mock_req):
+        mock_req.return_value = {"stats_returncode": 0, "preview_returncode": 0}
+        result = bridge_mcp_ghidra.gdb_analyze_pcap(
+            pcap="capture.pcap", display_filter="dns", max_packets=100, preview_packets=20, timeout=15
+        )
+        assert result["stats_returncode"] == 0
+        mock_req.assert_called_with(
+            "/pcap/analyze",
+            "POST",
+            {
+                "pcap": "capture.pcap",
+                "display_filter": "dns",
+                "max_packets": 100,
+                "preview_packets": 20,
+                "timeout": 15,
+            },
+        )
+
+    @patch("bridge_mcp_ghidra.gdb_request")
     def test_gdb_connection_error(self, mock_req):
         mock_req.return_value = {"error": "Cannot connect to GDB server"}
         result = bridge_mcp_ghidra.gdb_health()

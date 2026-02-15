@@ -1272,6 +1272,85 @@ def gdb_ltrace(binary: str, args: list = None, stdin: str = "", timeout: int = 1
 
 @mcp.tool()
 @recorded_tool
+def gdb_list_pcaps() -> dict:
+    """
+    List packet captures saved in the Docker container.
+
+    Returns:
+        Dict with available .pcap/.pcapng files in /analysis/pcaps
+    """
+    return gdb_request("/pcap/list")
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_capture_pcap(
+    interface: str = "any",
+    duration: int = 10,
+    packet_count: int = None,
+    filter: str = "",
+    output: str = None,
+    snaplen: int = 0,
+) -> dict:
+    """
+    Capture live network traffic inside the Docker container with tcpdump.
+
+    Args:
+        interface: Network interface name (default: "any")
+        duration: Capture duration in seconds (1-300)
+        packet_count: Optional packet limit (capture can stop before duration)
+        filter: Optional tcpdump BPF filter (e.g., "tcp port 80")
+        output: Optional output filename under /analysis/pcaps
+        snaplen: Snap length in bytes (0 = full packet)
+
+    Returns:
+        Dict with capture file path and tcpdump output
+    """
+    data = {
+        "interface": interface,
+        "duration": duration,
+        "packet_count": packet_count,
+        "filter": filter,
+        "output": output,
+        "snaplen": snaplen,
+    }
+    return gdb_request("/pcap/capture", "POST", data)
+
+
+@mcp.tool()
+@recorded_tool
+def gdb_analyze_pcap(
+    pcap: str,
+    display_filter: str = None,
+    max_packets: int = None,
+    preview_packets: int = 25,
+    timeout: int = 20,
+) -> dict:
+    """
+    Analyze a PCAP with tshark protocol statistics and packet preview rows.
+
+    Args:
+        pcap: PCAP filename under /analysis/pcaps (or absolute path inside container)
+        display_filter: Optional Wireshark display filter (e.g., "http || dns")
+        max_packets: Optional max packet count to process
+        preview_packets: Number of packets to include in CSV preview
+        timeout: Timeout in seconds for tshark commands
+
+    Returns:
+        Dict containing protocol hierarchy, conversations, endpoints, and CSV packet preview
+    """
+    data = {
+        "pcap": pcap,
+        "display_filter": display_filter,
+        "max_packets": max_packets,
+        "preview_packets": preview_packets,
+        "timeout": timeout,
+    }
+    return gdb_request("/pcap/analyze", "POST", data)
+
+
+@mcp.tool()
+@recorded_tool
 def gdb_checksec(binary: str) -> dict:
     """
     Check security features of a binary (NX, PIE, RELRO, Stack Canary).

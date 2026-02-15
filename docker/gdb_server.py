@@ -8,6 +8,7 @@ import contextlib
 import json
 import logging
 import os
+import shlex
 import subprocess
 import tempfile
 import threading
@@ -161,6 +162,8 @@ app = Flask(__name__)
 # Track running processes
 running_processes = {}
 BINS_DIR = Path("/analysis/bins")
+PCAPS_DIR = Path("/analysis/pcaps")
+PCAPS_DIR.mkdir(exist_ok=True)
 
 
 @app.route("/health", methods=["GET"])
@@ -935,6 +938,202 @@ def ltrace_binary():
         return jsonify({"error": "Timeout expired"})
     except Exception as e:
         return jsonify({"error": str(e)})
+
+
+@app.route("/pcap/list", methods=["GET"])
+def list_pcaps():
+    """List packet capture files available in the container."""
+    try:
+        captures = []
+        for pcap_path in sorted(PCAPS_DIR.glob("*.pcap*")):
+            stat = pcap_path.stat()
+            captures.append(
+                {
+                    "name": pcap_path.name,
+                    "path": str(pcap_path),
+                    "size_bytes": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                }
+            )
+        return jsonify({"pcaps": captures, "directory": str(PCAPS_DIR)})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+@app.route("/pcap/capture", methods=["POST"])
+def capture_pcap():
+    """Capture packets with tcpdump and save to a PCAP file."""
+    data = request.json or {}
+    interface = data.get("interface", "any")
+    packet_count = data.get("packet_count")
+    bpf_filter = data.get("filter", "")
+    output = data.get("output")
+    try:
+        duration = int(data.get("duration", 10))
+        snaplen = int(data.get("snaplen", 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "duration and snaplen must be integers"}), 400
+
+    if duration <= 0 or duration > 300:
+        return jsonify({"error": "duration must be between 1 and 300 seconds"}), 400
+
+    if packet_count is not None:
+        try:
+            packet_count = int(packet_count)
+        except (TypeError, ValueError):
+            return jsonify({"error": "packet_count must be an integer"}), 400
+        if packet_count <= 0:
+            return jsonify({"error": "packet_count must be > 0"}), 400
+
+    if output:
+        pcap_path = (PCAPS_DIR / output).resolve() if not str(output).startswith("/") else Path(output).resolve()
+    else:
+        stamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        pcap_path = (PCAPS_DIR / f"capture_{stamp}.pcap").resolve()
+
+    if PCAPS_DIR.resolve() not in pcap_path.parents:
+        return jsonify({"error": "output path must be inside /analysis/pcaps"}), 400
+
+    pcap_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = ["tcpdump", "-i", interface, "-nn", "-w", str(pcap_path), "-s", str(snaplen if snaplen > 0 else 0)]
+    if packet_count:
+        cmd.extend(["-c", str(packet_count)])
+    if bpf_filter:
+        try:
+            cmd.extend(shlex.split(bpf_filter))
+        except ValueError as e:
+            return jsonify({"error": f"Invalid BPF filter syntax: {e}"}), 400
+
+    timed_out = False
+    stdout = ""
+    stderr = ""
+    returncode = None
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=duration)
+        stdout = result.stdout
+        stderr = result.stderr
+        returncode = result.returncode
+    except subprocess.TimeoutExpired as exc:
+        # Timeout is expected when packet_count is not provided.
+        timed_out = True
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        returncode = 124
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+    size_bytes = pcap_path.stat().st_size if pcap_path.exists() else 0
+    return jsonify(
+        {
+            "capture_file": str(pcap_path),
+            "duration_seconds": duration,
+            "interface": interface,
+            "filter": bpf_filter,
+            "snaplen": snaplen if snaplen > 0 else 0,
+            "packet_count": packet_count,
+            "size_bytes": size_bytes,
+            "timed_out": timed_out,
+            "stdout": stdout,
+            "stderr": stderr,
+            "returncode": returncode,
+        }
+    )
+
+
+@app.route("/pcap/analyze", methods=["POST"])
+def analyze_pcap():
+    """Analyze a PCAP file with tshark summaries and packet preview output."""
+    data = request.json or {}
+    pcap = data.get("pcap")
+    display_filter = data.get("display_filter")
+    max_packets = data.get("max_packets")
+    try:
+        preview_packets = int(data.get("preview_packets", 25))
+        timeout = int(data.get("timeout", 20))
+    except (TypeError, ValueError):
+        return jsonify({"error": "preview_packets and timeout must be integers"}), 400
+
+    if not pcap:
+        return jsonify({"error": "No pcap specified"}), 400
+
+    if max_packets is not None:
+        try:
+            max_packets = int(max_packets)
+        except (TypeError, ValueError):
+            return jsonify({"error": "max_packets must be an integer"}), 400
+        if max_packets <= 0:
+            return jsonify({"error": "max_packets must be > 0"}), 400
+
+    if preview_packets <= 0 or preview_packets > 200:
+        return jsonify({"error": "preview_packets must be between 1 and 200"}), 400
+    if timeout <= 0 or timeout > 120:
+        return jsonify({"error": "timeout must be between 1 and 120 seconds"}), 400
+
+    pcap_path = (PCAPS_DIR / pcap).resolve() if not str(pcap).startswith("/") else Path(pcap).resolve()
+    if PCAPS_DIR.resolve() not in pcap_path.parents and pcap_path != PCAPS_DIR.resolve():
+        return jsonify({"error": "pcap path must be inside /analysis/pcaps"}), 400
+    if not pcap_path.exists():
+        return jsonify({"error": f"PCAP not found: {pcap_path}"}), 404
+
+    base_cmd = ["tshark", "-r", str(pcap_path), "-n"]
+    if display_filter:
+        base_cmd.extend(["-Y", display_filter])
+    if max_packets:
+        base_cmd.extend(["-c", str(max_packets)])
+
+    stats_cmd = base_cmd + ["-q", "-z", "io,phs", "-z", "conv,ip", "-z", "endpoints,ip"]
+    preview_limit = min(preview_packets, max_packets) if max_packets else preview_packets
+    preview_cmd = (
+        ["tshark", "-r", str(pcap_path), "-n"]
+        + (["-Y", display_filter] if display_filter else [])
+        + ["-c", str(preview_limit)]
+        + [
+            "-T",
+            "fields",
+            "-E",
+            "header=y",
+            "-E",
+            "separator=,",
+            "-e",
+            "frame.number",
+            "-e",
+            "frame.time_relative",
+            "-e",
+            "ip.src",
+            "-e",
+            "ip.dst",
+            "-e",
+            "_ws.col.Protocol",
+            "-e",
+            "frame.len",
+            "-e",
+            "_ws.col.Info",
+        ]
+    )
+
+    try:
+        stats_result = subprocess.run(stats_cmd, capture_output=True, text=True, timeout=timeout)
+        preview_result = subprocess.run(preview_cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "PCAP analysis timeout expired"}), 408
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+    return jsonify(
+        {
+            "pcap": str(pcap_path),
+            "display_filter": display_filter,
+            "max_packets": max_packets,
+            "stats_output": stats_result.stdout,
+            "stats_stderr": stats_result.stderr,
+            "stats_returncode": stats_result.returncode,
+            "preview_csv": preview_result.stdout,
+            "preview_stderr": preview_result.stderr,
+            "preview_returncode": preview_result.returncode,
+        }
+    )
 
 
 @app.route("/disassemble", methods=["POST"])
