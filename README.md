@@ -114,6 +114,12 @@ First, download the latest [release](https://github.com/LaurieWired/GhidraMCP/re
 6. Make sure the GhidraMCPPlugin is enabled in `File` -> `Configure` -> `Developer`
 7. *Optional*: Configure the port in Ghidra with `Edit` -> `Tool Options` -> `GhidraMCP HTTP Server`
 
+## Headless Multi-Process Setup (One Binary Per Agent)
+
+If you want true concurrency (one Ghidra process per binary / per agent), see `docs/HEADLESS_FARM.md`.
+This approach spawns isolated `analyzeHeadless` processes, each running a long-lived HTTP API server on its own port.
+For Mac mini setup + update instructions, see `docs/MAC_MINI_HEADLESS_SETUP.md`.
+
 Video Installation Guide:
 
 
