@@ -22,7 +22,7 @@ from mcp.server.fastmcp import FastMCP
 from trajectory_recorder import TrajectoryRecorder, analyze_trajectory, export_trajectory_markdown
 
 DEFAULT_GHIDRA_SERVER = "http://127.0.0.1:8080/"
-DEFAULT_GDB_SERVER = "http://127.0.0.1:5000/"
+DEFAULT_GDB_SERVER = "http://127.0.0.1:5051/"
 DEFAULT_TRAJECTORY_DIR = os.path.expanduser("~/Github/GhidraMCP/trajectories")
 
 logger = logging.getLogger(__name__)

@@ -10,8 +10,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      GHIDRA_VERSION: 11.3.2
-      GHIDRA_DATE: 20250415
+      GHIDRA_VERSION: 11.4.2
+      GHIDRA_DATE: 20250826
+      GHIDRA_URL: ""
       GHIDRA_LIBS: >-
         Features/Base/lib/Base.jar
         Features/Decompiler/lib/Decompiler.jar
@@ -33,7 +34,8 @@ jobs:
 
     - name: Download Ghidra
       run: |
-        wget --no-verbose -O ghidra.zip https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${{ env.GHIDRA_VERSION }}_build/ghidra_${{ env.GHIDRA_VERSION }}_PUBLIC_${{ env.GHIDRA_DATE }}.zip
+        url="${GHIDRA_URL:-https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip}"
+        wget --no-verbose -O ghidra.zip "$url"
         7z x -bd ghidra.zip
 
     - name: Copy Ghidra libs
@@ -50,7 +52,7 @@ jobs:
     - name: Assemble release directory
       run: |
         mkdir release
-        cp target/GhidraMCP-*-SNAPSHOT.zip release/
+        cp target/GhidraMCP-*.zip release/
         cp bridge_mcp_ghidra.py release/
 
     - name: Upload artifact

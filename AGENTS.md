@@ -19,7 +19,7 @@ Quick-start guide for AI agents (Claude, GPT, etc.) working with this reverse en
 │         │          ▼          │              │  angr             │ │
 │         │  ┌────────────────┐ │              │  pyelftools       │ │
 │         └─►│  MCP Bridge    │◄┘              │  z3-solver        │ │
-│            │  (Python)      │◄──── HTTP ────►│  :5000            │ │
+│            │  (Python)      │◄──── HTTP ────►│  :5051            │ │
 │            │  bridge_mcp_   │                │                   │ │
 │            │  ghidra.py     │                └───────────────────┘ │
 │            └────────────────┘                                      │
@@ -193,7 +193,7 @@ cd docker && docker-compose up -d --build
 
 # 3. Verify connectivity
 curl http://127.0.0.1:8080/methods    # Ghidra plugin
-curl http://127.0.0.1:5000/health     # GDB container
+curl http://127.0.0.1:5051/health     # GDB container
 
 # 4. Run MCP bridge (for Claude Desktop / Cline)
 python bridge_mcp_ghidra.py --transport stdio
@@ -208,7 +208,7 @@ python bridge_mcp_ghidra.py --transport stdio
       "args": [
         "/path/to/bridge_mcp_ghidra.py",
         "--ghidra-server", "http://127.0.0.1:8080/",
-        "--gdb-server", "http://127.0.0.1:5000/"
+        "--gdb-server", "http://127.0.0.1:5051/"
       ]
     }
   }

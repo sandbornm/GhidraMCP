@@ -35,7 +35,7 @@ Create or edit `~/.claude/claude_desktop_config.json`:
       "args": [
         "/path/to/GhidraMCP/bridge_mcp_ghidra.py",
         "--ghidra-server", "http://127.0.0.1:8080/",
-        "--gdb-server", "http://127.0.0.1:5000/"
+        "--gdb-server", "http://127.0.0.1:5051/"
       ]
     }
   }
@@ -82,7 +82,7 @@ cd ~/ctf/competition_name/
 cp ~/Downloads/challenge* .
 
 # Upload to GDB container for dynamic analysis
-curl -F "file=@challenge" http://127.0.0.1:5000/upload
+curl -F "file=@challenge" http://127.0.0.1:5051/upload
 
 # Load the binary in Ghidra (via GUI), then use Claude Code
 claude
@@ -112,7 +112,7 @@ claude
       "args": [
         "/path/to/GhidraMCP/bridge_mcp_ghidra.py",
         "--ghidra-server", "http://127.0.0.1:8080/",
-        "--gdb-server", "http://127.0.0.1:5000/"
+        "--gdb-server", "http://127.0.0.1:5051/"
       ]
     }
   }
@@ -143,7 +143,7 @@ claude
 ```bash
 # 1. Verify all services are running
 curl -s http://127.0.0.1:8080/methods | head -5    # Ghidra plugin
-curl -s http://127.0.0.1:5000/health | jq .         # GDB container
+curl -s http://127.0.0.1:5051/health | jq .         # GDB container
 
 # 2. Run the development checks
 cd /path/to/GhidraMCP
@@ -153,8 +153,8 @@ cd /path/to/GhidraMCP
 cd docker && docker-compose up -d --build
 
 # 4. Test a known binary
-curl -F "file=@/bin/ls" http://127.0.0.1:5000/upload
-curl -s -X POST http://127.0.0.1:5000/checksec \
+curl -F "file=@/bin/ls" http://127.0.0.1:5051/upload
+curl -s -X POST http://127.0.0.1:5051/checksec \
   -H "Content-Type: application/json" \
   -d '{"binary": "ls"}' | jq .
 ```
@@ -220,7 +220,7 @@ tmux attach -t re
 ```bash
 # Optional: Set default server URLs
 export GHIDRA_SERVER="http://127.0.0.1:8080/"
-export GDB_SERVER="http://127.0.0.1:5000/"
+export GDB_SERVER="http://127.0.0.1:5051/"
 
 # Optional: Set trajectory output directory
 export GHIDRA_MCP_TRAJECTORY_DIR="~/ctf/trajectories/"

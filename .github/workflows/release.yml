@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GHIDRA_VERSION: 11.4.2
+      GHIDRA_DATE: 20250826
+      GHIDRA_URL: ""
+      GHIDRA_LIBS: >-
+        Features/Base/lib/Base.jar
+        Features/Decompiler/lib/Decompiler.jar
+        Framework/Docking/lib/Docking.jar
+        Framework/Generic/lib/Generic.jar
+        Framework/Project/lib/Project.jar
+        Framework/SoftwareModeling/lib/SoftwareModeling.jar
+        Framework/Utility/lib/Utility.jar
+        Framework/Gui/lib/Gui.jar
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+
+      - name: Validate tag and version metadata
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import tomllib
+          import xml.etree.ElementTree as ET
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          pyproject_version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          expected = f"v{pyproject_version}"
+          if tag != expected:
+              raise SystemExit(f"tag {tag} does not match pyproject version {expected}")
+
+          pom = ET.parse("pom.xml").getroot()
+          ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+          pom_version = pom.findtext("m:version", namespaces=ns)
+          if pom_version != pyproject_version:
+              raise SystemExit(f"pom.xml version {pom_version} does not match pyproject {pyproject_version}")
+
+          props = dict(
+              line.split("=", 1)
+              for line in pathlib.Path("src/main/resources/extension.properties").read_text().splitlines()
+              if line and not line.startswith("#") and "=" in line
+          )
+          if props.get("version") != pyproject_version:
+              raise SystemExit(f"extension version {props.get('version')} does not match pyproject {pyproject_version}")
+          if props.get("ghidraVersion") != os.environ["GHIDRA_VERSION"]:
+              raise SystemExit(
+                  f"extension ghidraVersion {props.get('ghidraVersion')} does not match workflow GHIDRA_VERSION {os.environ['GHIDRA_VERSION']}"
+              )
+          PY
+
+      - name: Install Python dependencies
+        run: uv sync --locked --extra dev
+      - name: Python checks
+        run: |
+          uv run ruff check . --output-format=github
+          uv run pytest tests/ -v -m "not integration and not slow" --timeout=30
+
+      - name: Download Ghidra SDK
+        run: |
+          url="${GHIDRA_URL:-https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip}"
+          wget --no-verbose -O ghidra.zip "$url"
+          7z x -bd ghidra.zip
+
+      - name: Copy Ghidra libs
+        run: |
+          mkdir -p ./lib
+          for libfile in $GHIDRA_LIBS; do
+            cp "ghidra_${GHIDRA_VERSION}_PUBLIC/Ghidra/${libfile}" ./lib/
+          done
+
+      - name: Build extension ZIP
+        run: mvn clean package assembly:single
+
+      - name: Assemble release directory
+        run: |
+          mkdir release
+          cp target/GhidraMCP-*.zip release/
+          cp bridge_mcp_ghidra.py release/
+          cp bridge_mcp_static.py release/
+          cp bridge_mcp_gdb.py release/
+          cp trajectory_recorder.py release/
+          cp requirements.txt release/
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: gh release create "$TAG_NAME" release/* --generate-notes

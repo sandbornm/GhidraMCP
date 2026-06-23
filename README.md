@@ -114,6 +114,26 @@ First, download the latest [release](https://github.com/LaurieWired/GhidraMCP/re
 6. Make sure the GhidraMCPPlugin is enabled in `File` -> `Configure` -> `Developer`
 7. *Optional*: Configure the port in Ghidra with `Edit` -> `Tool Options` -> `GhidraMCP HTTP Server`
 
+## Python Bridge Commands
+
+Use `uv` to run the Python MCP bridges from this checkout:
+
+```bash
+uv sync --extra dev
+uv run ghidra-mcp --help
+uv run ghidra-mcp-static --help
+uv run ghidra-mcp-gdb --help
+```
+
+For local symbolic-execution helpers outside the Docker service, include
+`uv sync --extra symbolic`.
+
+The console commands map to the legacy bridge files:
+
+- `ghidra-mcp`: combined Ghidra + GDB MCP bridge.
+- `ghidra-mcp-static`: static Ghidra bridge with optional GDB interop.
+- `ghidra-mcp-gdb`: dedicated GDB/Docker dynamic analysis bridge.
+
 ## Headless Multi-Process Setup (One Binary Per Agent)
 
 If you want true concurrency (one Ghidra process per binary / per agent), see `docs/HEADLESS_FARM.md`.
@@ -138,9 +158,12 @@ To set up Claude Desktop as a Ghidra MCP client, go to `Claude` -> `Settings` ->
 {
   "mcpServers": {
     "ghidra": {
-      "command": "python",
+      "command": "uv",
       "args": [
-        "/ABSOLUTE_PATH_TO/bridge_mcp_ghidra.py",
+        "--directory",
+        "/ABSOLUTE_PATH_TO/GhidraMCP",
+        "run",
+        "ghidra-mcp",
         "--ghidra-server",
         "http://127.0.0.1:8080/"
       ]
@@ -160,7 +183,7 @@ The server IP and port are configurable and should be set to point to the target
 To use GhidraMCP with [Cline](https://cline.bot), this requires manually running the MCP server as well. First run the following command:
 
 ```
-python bridge_mcp_ghidra.py --transport sse --mcp-host 127.0.0.1 --mcp-port 8081 --ghidra-server http://127.0.0.1:8080/
+uv run ghidra-mcp --transport sse --mcp-host 127.0.0.1 --mcp-port 8081 --ghidra-server http://127.0.0.1:8080/
 ```
 
 The only *required* argument is the transport. If all other arguments are unspecified, they will default to the above. Once the MCP server is running, open up Cline and select `MCP Servers` at the top.
@@ -177,7 +200,7 @@ Another MCP client that supports multiple models on the backend is [5ire](https:
 
 1. Tool Key: ghidra
 2. Name: GhidraMCP
-3. Command: `python /ABSOLUTE_PATH_TO/bridge_mcp_ghidra.py`
+3. Command: `uv --directory /ABSOLUTE_PATH_TO/GhidraMCP run ghidra-mcp`
 
 # Testing
 
@@ -187,18 +210,18 @@ The project includes a comprehensive Python test suite with 199 tests.
 
 ```bash
 # With uv (recommended)
-uv pip install -e . -r requirements-dev.txt
-python -m pytest tests/ -v
+uv sync --extra dev
+uv run pytest tests/ -v
 
 # Or with pip
 pip install -r requirements-dev.txt
 python -m pytest tests/ -v
 
 # Run just unit tests (fast)
-python -m pytest tests/ -v -m "not integration and not slow"
+uv run pytest tests/ -v -m "not integration and not slow"
 
 # Run with coverage
-python -m pytest tests/ --cov=bridge_mcp_ghidra --cov=trajectory_recorder --cov-report=term-missing
+uv run pytest tests/ --cov=bridge_mcp_ghidra --cov=trajectory_recorder --cov-report=term-missing
 
 # Run the full check script (lint + typecheck + tests)
 ./scripts/check.sh

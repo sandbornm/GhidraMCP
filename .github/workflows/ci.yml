@@ -31,16 +31,16 @@ jobs:
         version: "latest"
 
     - name: Install dependencies (uv)
-      run: uv pip install -e . -r requirements-dev.txt
+      run: uv sync --locked --extra dev
 
     - name: Run ruff linter
-      run: ruff check . --output-format=github
+      run: uv run ruff check . --output-format=github
 
     - name: Run ruff formatter check
-      run: ruff format --check .
+      run: uv run ruff format --check .
 
     - name: Run mypy type checking
-      run: mypy bridge_mcp_ghidra.py trajectory_recorder.py --ignore-missing-imports
+      run: uv run mypy bridge_mcp_ghidra.py trajectory_recorder.py --ignore-missing-imports
 
   # ===========================================================================
   # Python Tests
@@ -67,11 +67,11 @@ jobs:
         version: "latest"
 
     - name: Install dependencies (uv)
-      run: uv pip install -e . -r requirements-dev.txt
+      run: uv sync --locked --extra dev
 
     - name: Run unit tests with coverage
       run: |
-        python -m pytest tests/ -v \
+        uv run pytest tests/ -v \
           --cov=bridge_mcp_ghidra \
           --cov=trajectory_recorder \
           --cov-report=xml \
@@ -107,11 +107,11 @@ jobs:
         version: "latest"
 
     - name: Install dependencies (uv)
-      run: uv pip install -e . -r requirements-dev.txt
+      run: uv sync --locked --extra dev
 
     - name: Run integration tests
       run: |
-        python -m pytest tests/ -v -m "integration" --timeout=60
+        uv run pytest tests/ -v -m "integration" --timeout=60
 
   # ===========================================================================
   # Java/Maven Build (Ghidra Plugin)
@@ -120,8 +120,9 @@ jobs:
     name: Build Ghidra Plugin
     runs-on: ubuntu-latest
     env:
-      GHIDRA_VERSION: 11.3.2
-      GHIDRA_DATE: 20250415
+      GHIDRA_VERSION: 11.4.2
+      GHIDRA_DATE: 20250826
+      GHIDRA_URL: ""
       GHIDRA_LIBS: >-
         Features/Base/lib/Base.jar
         Features/Decompiler/lib/Decompiler.jar
@@ -144,7 +145,8 @@ jobs:
 
     - name: Download Ghidra
       run: |
-        wget --no-verbose -O ghidra.zip https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${{ env.GHIDRA_VERSION }}_build/ghidra_${{ env.GHIDRA_VERSION }}_PUBLIC_${{ env.GHIDRA_DATE }}.zip
+        url="${GHIDRA_URL:-https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip}"
+        wget --no-verbose -O ghidra.zip "$url"
         7z x -bd ghidra.zip
 
     - name: Copy Ghidra libs
@@ -161,7 +163,7 @@ jobs:
     - name: Assemble release directory
       run: |
         mkdir release
-        cp target/GhidraMCP-*-SNAPSHOT.zip release/
+        cp target/GhidraMCP-*.zip release/
         cp bridge_mcp_ghidra.py release/
         cp trajectory_recorder.py release/
         cp requirements.txt release/
@@ -212,7 +214,7 @@ jobs:
       run: |
         set -euo pipefail
         for i in $(seq 1 20); do
-          if curl -sf "http://127.0.0.1:5000/health" > /tmp/health.json; then
+          if curl -sf "http://127.0.0.1:5051/health" > /tmp/health.json; then
             exit 0
           fi
           sleep 2
@@ -226,13 +228,13 @@ jobs:
         set -euo pipefail
 
         code_pe=$(curl -sS -o /tmp/pe_info.json -w "%{http_code}" \
-          -X POST "http://127.0.0.1:5000/pe/info" \
+          -X POST "http://127.0.0.1:5051/pe/info" \
           -H "Content-Type: application/json" \
           -d '{"binary":"definitely_missing.exe"}')
         test "$code_pe" = "404"
 
         code_angr=$(curl -sS -o /tmp/angr_entry.json -w "%{http_code}" \
-          -X POST "http://127.0.0.1:5000/angr/entry" \
+          -X POST "http://127.0.0.1:5051/angr/entry" \
           -H "Content-Type: application/json" \
           -d '{"binary":"definitely_missing.bin"}')
         test "$code_angr" = "404"
@@ -240,7 +242,7 @@ jobs:
     - name: Verify angr self-test runtime health
       run: |
         set -euo pipefail
-        curl -sS -X POST "http://127.0.0.1:5000/angr/selftest" \
+        curl -sS -X POST "http://127.0.0.1:5051/angr/selftest" \
           -H "Content-Type: application/json" \
           -d '{"timeout":30}' > /tmp/angr_selftest.json
         python3 -c "import json; d=json.load(open('/tmp/angr_selftest.json')); assert d.get('ok') is True, d; assert d.get('found_states', 0) >= 1, d; print('angr selftest ok')"
@@ -274,10 +276,10 @@ jobs:
         version: "latest"
 
     - name: Install dependencies (uv)
-      run: uv pip install -e . -r requirements-dev.txt
+      run: uv sync --locked --extra dev
 
     - name: Run ruff security rules
-      run: ruff check . --select S --output-format=github || true
+      run: uv run ruff check . --select S --output-format=github || true
 
     - name: Check for secrets in code
       run: |

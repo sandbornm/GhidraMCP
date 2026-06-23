@@ -65,3 +65,7 @@ uv.lock
 bins/
 
 trajectories/
+
+# Generated analysis outputs
+analysis/
+artifacts/

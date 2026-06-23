@@ -57,7 +57,7 @@ cd docker
 docker-compose up -d --build
 
 # Check if it's running
-curl http://127.0.0.1:5000/health
+curl http://127.0.0.1:5051/health
 
 # Stop the container
 docker-compose down
@@ -186,7 +186,7 @@ docker-compose down
 |         |         |         |            |  | Frida         |  | |
 |         |         v         |            |  | pwntools      |  | |
 |         |  +--------------+ |            |  | angr / z3     |  | |
-|         +->|  MCP Bridge  |<+            |  |   :5000       |  | |
+|         +->|  MCP Bridge  |<+            |  |   :5051       |  | |
 |            |  (Python)    |<----HTTP---->|  +---------------+  | |
 |            +--------------+              +---------------------+ |
 +------------------------------------------------------------------+

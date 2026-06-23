@@ -1,15 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "ghidra-mcp"
 version = "1.5.0"
 description = "MCP server for LLM-driven reverse engineering with Ghidra and GDB"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
+readme = "README.md"
 dependencies = [
     "mcp>=1.5.0,<2",
     "requests>=2.32,<3",
 ]
 
 [project.optional-dependencies]
+symbolic = [
+    "angr>=9.2.202",
+    "unicorn>=2.1.4",
+    "z3-solver>=4.13.0.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -19,6 +29,19 @@ dev = [
     "mypy>=1.0",
     "types-requests>=2.31",
     "pre-commit>=3.0",
+]
+
+[project.scripts]
+ghidra-mcp = "bridge_mcp_ghidra:main"
+ghidra-mcp-gdb = "bridge_mcp_gdb:main"
+ghidra-mcp-static = "bridge_mcp_static:main"
+
+[tool.setuptools]
+py-modules = [
+    "bridge_mcp_ghidra",
+    "bridge_mcp_gdb",
+    "bridge_mcp_static",
+    "trajectory_recorder",
 ]
 
 [tool.ruff]

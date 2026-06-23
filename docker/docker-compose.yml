@@ -12,7 +12,7 @@ services:
     platform: linux/amd64
     container_name: ghidra-mcp-gdb
     ports:
-      - "127.0.0.1:5000:5000"    # HTTP API - localhost only
+      - "127.0.0.1:${GDB_HTTP_PORT:-5051}:5051"    # HTTP API host port configurable
       - "127.0.0.1:1234:1234"    # gdbserver - localhost only
     volumes:
       # Mount binaries directory (read-write for uploads)
@@ -37,9 +37,8 @@ services:
           memory: 512M
     # Healthcheck for robustness (retries, start period)
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:5000/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:5051/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-

@@ -27,7 +27,7 @@ pytestmark = pytest.mark.integration
 def reset_globals():
     """Reset global state before each test."""
     bridge_mcp_ghidra.ghidra_server_url = "http://127.0.0.1:8080/"
-    bridge_mcp_ghidra.gdb_server_url = "http://127.0.0.1:5000/"
+    bridge_mcp_ghidra.gdb_server_url = "http://127.0.0.1:5051/"
     bridge_mcp_ghidra.trajectory_recorder = None
     yield
 
@@ -436,7 +436,7 @@ class TestErrorRecovery:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_gdb_server_down(self, mock_gdb):
         """GDB tools should return error dict when Docker is unreachable."""
-        mock_gdb.return_value = {"error": "Cannot connect to GDB server at http://127.0.0.1:5000/."}
+        mock_gdb.return_value = {"error": "Cannot connect to GDB server at http://127.0.0.1:5051/."}
 
         result = bridge_mcp_ghidra.gdb_health()
         assert "error" in result

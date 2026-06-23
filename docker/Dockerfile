@@ -98,10 +98,10 @@ COPY gdb_server.py /analysis/gdb_server.py
 RUN chown analyst:analyst /analysis/gdb_server.py
 
 # Expose ports:
-# 5000 - HTTP API for GDB commands
+# 5051 - HTTP API for GDB commands
 # 1234 - gdbserver remote debugging
 # 27042 - Frida server
-EXPOSE 5000 1234 27042
+EXPOSE 5051 1234 27042
 
 # Optional: Install wine for Windows PE execution (uncomment if needed)
 # RUN apt-get update && apt-get install -y wine64 && rm -rf /var/lib/apt/lists/*
@@ -110,7 +110,7 @@ EXPOSE 5000 1234 27042
 
 # Healthcheck for container robustness
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -sf http://localhost:5000/health || exit 1
+    CMD curl -sf http://localhost:5051/health || exit 1
 
 # Note: Running as root for now because GDB/strace need elevated privileges
 # For maximum security, uncomment USER line and use sudo where needed

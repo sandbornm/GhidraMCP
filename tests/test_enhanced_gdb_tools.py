@@ -20,7 +20,7 @@ import bridge_mcp_ghidra
 def reset_globals():
     """Reset global state before each test."""
     bridge_mcp_ghidra.ghidra_server_url = "http://127.0.0.1:8080/"
-    bridge_mcp_ghidra.gdb_server_url = "http://127.0.0.1:5000/"
+    bridge_mcp_ghidra.gdb_server_url = "http://127.0.0.1:5051/"
     bridge_mcp_ghidra.trajectory_recorder = None
     yield
 
@@ -483,7 +483,7 @@ class TestEnhancedToolErrors:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_new_tools_handle_connection_error(self, mock_gdb):
         """All new tools should handle connection errors gracefully."""
-        mock_gdb.return_value = {"error": "Cannot connect to GDB server at http://127.0.0.1:5000/"}
+        mock_gdb.return_value = {"error": "Cannot connect to GDB server at http://127.0.0.1:5051/"}
 
         # Each tool should return the error dict without crashing
         assert "error" in bridge_mcp_ghidra.gdb_read_registers(binary="t")

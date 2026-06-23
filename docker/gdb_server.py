@@ -3413,9 +3413,9 @@ if __name__ == "__main__":
     BINS_DIR.mkdir(exist_ok=True)
     LOG_DIR.mkdir(exist_ok=True)
 
-    logger.info("Starting GDB API server on port 5000...")
+    logger.info("Starting GDB API server on port 5051...")
     logger.info(f"Binaries directory: {BINS_DIR}")
     logger.info(f"Logs directory: {LOG_DIR}")
     logger.info("Upload binaries to /analysis/bins or via POST /upload")
 
-    app.run(host="0.0.0.0", port=5000, debug=False)  # noqa: S104
+    app.run(host="0.0.0.0", port=5051, debug=False)  # noqa: S104

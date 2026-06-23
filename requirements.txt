@@ -1,2 +1,5 @@
-mcp==1.5.0
-requests==2.32.3
+angr>=9.2.202
+mcp>=1.5.0,<2
+requests>=2.32,<3
+unicorn>=2.1.4
+z3-solver>=4.13.0.0

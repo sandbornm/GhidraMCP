@@ -43,7 +43,6 @@ import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
-import ghidra.program.model.symbol.GlobalNamespace;
 import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.program.model.symbol.Symbol;
@@ -244,7 +243,7 @@ public class GhidraMCPHeadlessServer extends GhidraScript {
         });
 
         server.createContext("/save_program", exchange -> {
-            sendResponse(exchange, saveProgram(program));
+            sendResponse(exchange, saveProgramToProject(program));
         });
 
         server.createContext("/list_exporters", exchange -> sendResponse(exchange, listExporters()));
@@ -319,7 +318,7 @@ public class GhidraMCPHeadlessServer extends GhidraScript {
         Set<String> namespaces = new HashSet<>();
         for (Symbol symbol : program.getSymbolTable().getAllSymbols(true)) {
             Namespace ns = symbol.getParentNamespace();
-            if (ns != null && !(ns instanceof GlobalNamespace)) {
+            if (ns != null && !ns.isGlobal()) {
                 namespaces.add(ns.getName());
             }
         }
@@ -634,7 +633,7 @@ public class GhidraMCPHeadlessServer extends GhidraScript {
         }
     }
 
-    private String saveProgram(Program program) {
+    private String saveProgramToProject(Program program) {
         try {
             program.save("Saved via GhidraMCPHeadlessServer", new ConsoleTaskMonitor());
             return "Program saved to Ghidra project: " + program.getName();

@@ -3,7 +3,7 @@
 # macOS bootstrap for headless Ghidra farm:
 # - Install JDK 21 (required for Ghidra 11.4.x)
 # - Install Python 3.12 + uv
-# - Optionally install Ghidra 11.4.2 from a local zip or URL
+# - Optionally install Ghidra from a local zip, version/date, or URL
 #
 # This script is intentionally strict and idempotent-ish.
 #
@@ -20,7 +20,15 @@ blu() { printf "\033[0;34m%s\033[0m\n" "$*"; }
 
 die() { red "error: $*"; exit 1; }
 
-DEFAULT_GHIDRA_11_4_2_URL="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_11.4.2_build/ghidra_11.4.2_PUBLIC_20250826.zip"
+DEFAULT_GHIDRA_VERSION="11.4.2"
+DEFAULT_GHIDRA_DATE="20250826"
+
+ghidra_release_url() {
+  local version="$1"
+  local date="$2"
+  printf "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_%s_build/ghidra_%s_PUBLIC_%s.zip" \
+    "$version" "$version" "$date"
+}
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
@@ -79,24 +87,25 @@ maybe_symlink_jdk() {
 install_ghidra_from_zip() {
   local zip_path="$1"
   local dest_dir="$2"
+  local version="$3"
 
   [[ -f "$zip_path" ]] || die "ghidra zip not found: $zip_path"
   mkdir -p "$dest_dir"
 
-  # Unzip produces a versioned folder name; put it under dest_dir and then normalize to ghidra_11.4.2_PUBLIC.
+  # Unzip produces a versioned folder name; put it under dest_dir and then normalize.
   ylw "Unzipping Ghidra into $dest_dir"
   /usr/bin/unzip -q -o "$zip_path" -d "$dest_dir"
 
   # Find the extracted ghidra_*_PUBLIC* directory.
   local extracted
-  extracted="$(/bin/ls -1 "$dest_dir" | /usr/bin/grep -E '^ghidra_11\.4\.2_.*PUBLIC' | /usr/bin/head -1 || true)"
+  extracted="$(/bin/ls -1 "$dest_dir" | /usr/bin/grep -E "^ghidra_${version//./\\.}_.*PUBLIC" | /usr/bin/head -1 || true)"
   if [[ -z "$extracted" ]]; then
     extracted="$(/bin/ls -1 "$dest_dir" | /usr/bin/grep -E '^ghidra_.*PUBLIC' | /usr/bin/head -1 || true)"
   fi
   [[ -n "$extracted" ]] || die "could not locate extracted ghidra_*_PUBLIC directory under $dest_dir"
 
   local extracted_path="$dest_dir/$extracted"
-  local normalized="$dest_dir/ghidra_11.4.2_PUBLIC"
+  local normalized="$dest_dir/ghidra_${version}_PUBLIC"
   if [[ "$extracted_path" != "$normalized" ]]; then
     ylw "Normalizing install dir to $normalized"
     /bin/rm -rf "$normalized"
@@ -129,9 +138,11 @@ Options:
   --install-brew              Install Homebrew if missing
   --zshrc PATH                Zsh rc file to edit (default: ~/.zshrc)
 
-  --with-ghidra               Also install/configure Ghidra 11.4.2
-  --ghidra-zip PATH           Local path to a Ghidra 11.4.2 PUBLIC zip
-  --ghidra-url URL            URL to download a Ghidra 11.4.2 PUBLIC zip (default: official NSA GitHub release asset)
+  --with-ghidra               Also install/configure Ghidra
+  --ghidra-version VERSION    Ghidra version to install (default: 11.4.2)
+  --ghidra-date YYYYMMDD      Release asset date (default: 20250826 for 11.4.2)
+  --ghidra-zip PATH           Local path to a Ghidra PUBLIC zip
+  --ghidra-url URL            URL to download a Ghidra PUBLIC zip (overrides version/date URL)
   --ghidra-dest-dir PATH      Destination directory to unzip into (default: ~/tools)
 
 Examples:
@@ -141,10 +152,13 @@ Examples:
   # Install everything (Ghidra zip already downloaded):
   scripts/setup_mac.sh --install-brew --with-ghidra --ghidra-zip ~/Downloads/ghidra_11.4.2_PUBLIC_*.zip
 
-  # Install everything (download from URL):
+  # Install a specific release asset:
+  scripts/setup_mac.sh --install-brew --with-ghidra --ghidra-version 11.4.2 --ghidra-date 20250826
+
+  # Install from an explicit URL:
   scripts/setup_mac.sh --install-brew --with-ghidra --ghidra-url 'https://...' --ghidra-dest-dir ~/tools
 
-  # Install everything (use default Ghidra 11.4.2 URL):
+  # Install everything (use default Ghidra URL):
   scripts/setup_mac.sh --install-brew --with-ghidra --ghidra-dest-dir ~/tools
 EOF
 }
@@ -157,6 +171,8 @@ main() {
   local zshrc="${HOME}/.zshrc"
   local ghidra_zip=""
   local ghidra_url=""
+  local ghidra_version="$DEFAULT_GHIDRA_VERSION"
+  local ghidra_date="$DEFAULT_GHIDRA_DATE"
   local ghidra_dest_dir="${HOME}/tools"
 
   while [[ $# -gt 0 ]]; do
@@ -164,6 +180,8 @@ main() {
       --install-brew) install_brew=1; shift ;;
       --with-ghidra) with_ghidra=1; shift ;;
       --zshrc) zshrc="$2"; shift 2 ;;
+      --ghidra-version) ghidra_version="$2"; shift 2 ;;
+      --ghidra-date) ghidra_date="$2"; shift 2 ;;
       --ghidra-zip) ghidra_zip="$2"; shift 2 ;;
       --ghidra-url) ghidra_url="$2"; shift 2 ;;
       --ghidra-dest-dir) ghidra_dest_dir="$2"; shift 2 ;;
@@ -201,24 +219,24 @@ main() {
   fi
 
   if [[ "$with_ghidra" == "1" ]]; then
-    blu "== Ghidra 11.4.2 =="
+    blu "== Ghidra ${ghidra_version} =="
     if [[ -n "$ghidra_zip" && -n "$ghidra_url" ]]; then
       die "choose only one: --ghidra-zip or --ghidra-url"
     fi
     if [[ -z "$ghidra_zip" && -z "$ghidra_url" ]]; then
-      ghidra_url="$DEFAULT_GHIDRA_11_4_2_URL"
-      ylw "No --ghidra-zip/--ghidra-url provided; using default:"
+      ghidra_url="$(ghidra_release_url "$ghidra_version" "$ghidra_date")"
+      ylw "No --ghidra-zip/--ghidra-url provided; using version/date URL:"
       ylw "  $ghidra_url"
     fi
 
     local tmp_zip=""
     if [[ -n "$ghidra_url" ]]; then
-      tmp_zip="$(mktemp -t ghidra_11_4_2.XXXXXX.zip)"
+      tmp_zip="$(mktemp -t "ghidra_${ghidra_version}.XXXXXX.zip")"
       download_to "$ghidra_url" "$tmp_zip"
       ghidra_zip="$tmp_zip"
     fi
 
-    install_ghidra_from_zip "$ghidra_zip" "$ghidra_dest_dir"
+    install_ghidra_from_zip "$ghidra_zip" "$ghidra_dest_dir" "$ghidra_version"
 
     if [[ -n "$tmp_zip" ]]; then
       /bin/rm -f "$tmp_zip"
@@ -230,4 +248,3 @@ main() {
 }
 
 main "$@"
-

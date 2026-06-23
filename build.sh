@@ -57,7 +57,7 @@ else
 fi
 
 if [ $? -eq 0 ]; then
-    PLUGIN_PATH="$SCRIPT_DIR/target/GhidraMCP-1.0-SNAPSHOT.zip"
+    PLUGIN_PATH=$(ls "$SCRIPT_DIR"/target/GhidraMCP-*.zip | head -1)
     PLUGIN_SIZE=$(ls -lh "$PLUGIN_PATH" | awk '{print $5}')
     echo -e "${GREEN}✓ Plugin built successfully${NC}"
     echo -e "  ${BLUE}Path:${NC} $PLUGIN_PATH"
@@ -105,7 +105,7 @@ else
 fi
 
 # Check Docker/GDB
-GDB_STATUS=$(curl -s http://127.0.0.1:5000/health 2>/dev/null)
+GDB_STATUS=$(curl -s http://127.0.0.1:5051/health 2>/dev/null)
 if [ -n "$GDB_STATUS" ]; then
     echo -e "  ${GREEN}✓ GDB container:${NC} Running"
 else
