@@ -555,9 +555,7 @@ class TestAngrTools:
     @patch("bridge_mcp_ghidra.gdb_request")
     def test_angr_explore_with_avoid(self, mock_gdb):
         mock_gdb.return_value = {"found": False}
-        bridge_mcp_ghidra.angr_explore(
-            binary="crackme", find_addr="0x401050", avoid_addrs=["0x401000"], timeout=60
-        )
+        bridge_mcp_ghidra.angr_explore(binary="crackme", find_addr="0x401050", avoid_addrs=["0x401000"], timeout=60)
         call_data = mock_gdb.call_args[0][2]
         assert call_data["avoid_addrs"] == ["0x401000"]
         assert call_data["timeout"] == 60

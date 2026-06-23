@@ -74,7 +74,9 @@ def gdb_file_info(binary: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-def gdb_run_binary(binary: str, args: list[str] | None = None, stdin: str = "", timeout: int = 10, arch: str | None = None) -> dict[str, Any]:
+def gdb_run_binary(
+    binary: str, args: list[str] | None = None, stdin: str = "", timeout: int = 10, arch: str | None = None
+) -> dict[str, Any]:
     data: dict[str, Any] = {"binary": binary, "args": args or [], "stdin": stdin, "timeout": timeout}
     if arch:
         data["arch"] = arch
@@ -98,7 +100,9 @@ def gdb_read_registers(binary: str, breakpoint: str = "main") -> dict[str, Any]:
 
 @mcp.tool()
 def gdb_read_memory(binary: str, address: str, length: int = 64, format: str = "hex") -> dict[str, Any]:
-    return gdb_request("/gdb/memory", "POST", {"binary": binary, "address": address, "length": length, "format": format})
+    return gdb_request(
+        "/gdb/memory", "POST", {"binary": binary, "address": address, "length": length, "format": format}
+    )
 
 
 @mcp.tool()
@@ -121,7 +125,9 @@ def gdb_vmmap(binary: str, breakpoint: str = "main") -> dict[str, Any]:
 
 
 @mcp.tool()
-def gdb_search_pattern(binary: str, pattern: str, breakpoint: str = "main", pattern_type: str = "string") -> dict[str, Any]:
+def gdb_search_pattern(
+    binary: str, pattern: str, breakpoint: str = "main", pattern_type: str = "string"
+) -> dict[str, Any]:
     return gdb_request(
         "/gdb/search_pattern",
         "POST",
@@ -230,7 +236,9 @@ def angr_cfg(binary: str, timeout: int = 60) -> dict[str, Any]:
 
 
 @mcp.tool()
-def angr_explore(binary: str, find_addr: str, avoid_addrs: list[str] | None = None, timeout: int = 120) -> dict[str, Any]:
+def angr_explore(
+    binary: str, find_addr: str, avoid_addrs: list[str] | None = None, timeout: int = 120
+) -> dict[str, Any]:
     data: dict[str, Any] = {"binary": binary, "find_addr": find_addr, "timeout": timeout, "stdin_symbolic": True}
     if avoid_addrs:
         data["avoid_addrs"] = avoid_addrs

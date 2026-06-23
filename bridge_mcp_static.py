@@ -229,7 +229,9 @@ def save_program() -> str:
 
 @mcp.tool()
 @recorded_tool
-def export_and_upload_to_gdb(output_path: str, remote_name: str | None = None, format: str = "original") -> dict[str, Any]:
+def export_and_upload_to_gdb(
+    output_path: str, remote_name: str | None = None, format: str = "original"
+) -> dict[str, Any]:
     """
     Export a patched binary from Ghidra and upload it to the GDB API.
     This is the intended static<->dynamic interop path.

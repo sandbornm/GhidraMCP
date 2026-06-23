@@ -21,12 +21,10 @@ import socket
 import time
 from pathlib import Path
 from typing import Any
-from urllib import error as urlerror
 from urllib import request as urlrequest
 from urllib.parse import urlparse
 
 from ghidra_farm import JobConfigError, load_job_spec, spawn_job
-
 
 DEFAULT_GDB_SERVER = os.getenv("GHIDRA_GDB_SERVER", os.getenv("GDB_SERVER", "http://127.0.0.1:5051/"))
 IGNORE_FILES = {
@@ -66,7 +64,7 @@ def _pid_from_file(pid_path: Path) -> int | None:
 
 def _http_ok(url: str, timeout_s: float = 1.0) -> bool:
     try:
-        with urlrequest.urlopen(url, timeout=timeout_s) as resp:
+        with urlrequest.urlopen(url, timeout=timeout_s) as resp:  # noqa: S310
             return 200 <= resp.status < 300
     except Exception:
         return False
@@ -133,7 +131,7 @@ def _collect_used_ports(jobs_root: Path, mcp_config_path: Path) -> set[int]:
                     parsed_port = _extract_port(url)
                     if parsed_port:
                         used.add(parsed_port)
-            except Exception:
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
                 continue
 
     # Existing MCP entries
@@ -256,7 +254,9 @@ def _update_mcp_config(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Provision and start one headless Ghidra job safely.")
-    parser.add_argument("--job-dir", required=True, type=Path, help="Path to one job directory (e.g. ~/ghidra-jobs/NewJob)")
+    parser.add_argument(
+        "--job-dir", required=True, type=Path, help="Path to one job directory (e.g. ~/ghidra-jobs/NewJob)"
+    )
     parser.add_argument("--binary", default=None, help="Binary filename relative to --job-dir (auto-detect if omitted)")
     parser.add_argument(
         "--ghidra-install-dir",

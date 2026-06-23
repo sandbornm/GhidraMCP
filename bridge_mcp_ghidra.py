@@ -1651,7 +1651,9 @@ def gdb_pe_info(binary: str) -> dict:
 
 @mcp.tool()
 @recorded_tool
-def angr_explore(binary: str, find_addr: str, avoid_addrs: list = None, timeout: int = 120, stdin_symbolic: bool = True) -> dict:
+def angr_explore(
+    binary: str, find_addr: str, avoid_addrs: list = None, timeout: int = 120, stdin_symbolic: bool = True
+) -> dict:
     """
     Symbolic execution: find input that reaches a target address.
     Uses angr to explore paths and extract stdin that reaches find_addr.
@@ -1747,7 +1749,7 @@ def auto_triage(binary: str, include_strings: bool = True, string_filter: str = 
         format (ELF/PE), and notable strings. Errors for individual steps
         are captured without failing the whole pipeline.
     """
-    result = {"binary": binary, "steps": {}, "summary": ""}
+    result: dict[str, Any] = {"binary": binary, "steps": {}, "summary": ""}
     errors = []
 
     # 1. File info
@@ -1785,7 +1787,9 @@ def auto_triage(binary: str, include_strings: bool = True, string_filter: str = 
             errors.append(f"pe_info: {pe['error']}")
         else:
             result["steps"]["pe_info"] = pe
-            result["imports"] = [f"{i.get('dll','')}!{i.get('name', i.get('ordinal',''))}" for i in pe.get("imports", [])[:50]]
+            result["imports"] = [
+                f"{i.get('dll', '')}!{i.get('name', i.get('ordinal', ''))}" for i in pe.get("imports", [])[:50]
+            ]
     else:
         imp = gdb_request("/imports", "POST", {"binary": binary})
         if "error" in imp:
@@ -2552,7 +2556,8 @@ def _resolve_trajectory_path(trajectory_path: str | None) -> str | None:
         return None
 
     latest = trajectories[0]
-    return latest.get("path")
+    path = latest.get("path")
+    return path if isinstance(path, str) else None
 
 
 @mcp.tool()
@@ -2637,8 +2642,7 @@ def analysis_session_recap(
             md_lines.append("\n## Terminal Snapshots")
             for idx, entry in enumerate(commands[-max_terminal_snapshots:], 1):
                 md_lines.append(
-                    f"\n### Snapshot {idx}: `{entry.get('tool', 'unknown')}` → "
-                    f"`{entry.get('command', '')}`"
+                    f"\n### Snapshot {idx}: `{entry.get('tool', 'unknown')}` → `{entry.get('command', '')}`"
                 )
                 stdout_tail = entry.get("stdout_tail", "") or ""
                 stderr_tail = entry.get("stderr_tail", "") or ""

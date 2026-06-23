@@ -86,9 +86,9 @@ def test_spawn_job_dry_run_writes_server_json(jobs_root: Path, tmp_path: Path):
     server_json = job_dir / "server.json"
     assert server_json.exists()
     data = json.loads(server_json.read_text(encoding="utf-8"))
+    assert info["dry_run"] is True
     assert data["dry_run"] is True
     assert data["job_id"] == "job1"
     assert data["url"].startswith("http://")
     assert data["java_opts"] == ["-Xmx2g"]
     assert "JAVA_OPTS" in data["java_opts_env"]
-

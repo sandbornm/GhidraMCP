@@ -3040,7 +3040,7 @@ def pe_info():
         pe = pefile.PE(str(binary_path), fast_load=True)
         # Required when using fast_load=True, otherwise imports/exports may be missing.
         pe.parse_data_directories()
-        machine_map = {0x14c: "i386", 0x8664: "amd64", 0x1c4: "arm", 0xaa64: "arm64"}
+        machine_map = {0x14C: "i386", 0x8664: "amd64", 0x1C4: "arm", 0xAA64: "arm64"}
         machine = pe.FILE_HEADER.Machine
         result = {
             "binary": str(binary_path),
@@ -3158,10 +3158,7 @@ def angr_explore():
         find_int = int(find_addr, 16) if isinstance(find_addr, str) else find_addr
         avoid_ints = [int(a, 16) if isinstance(a, str) else a for a in avoid_addrs]
 
-        if stdin_symbolic:
-            state = project.factory.entry_state(stdin=angr.SimFile)
-        else:
-            state = project.factory.entry_state()
+        state = project.factory.entry_state(stdin=angr.SimFile) if stdin_symbolic else project.factory.entry_state()
 
         simgr = project.factory.simulation_manager(state)
         timed_out = False
@@ -3231,8 +3228,6 @@ def angr_cfg():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
 
     try:
-        import angr
-
         project, err = _angr_project(binary_path, timeout_sec=30)
         if err:
             return jsonify({"error": f"Failed to load binary: {err}"}), 500
@@ -3280,8 +3275,6 @@ def angr_entry():
         return jsonify({"error": f"Binary not found: {binary_path}"}), 404
 
     try:
-        import angr
-
         project, err = _angr_project(binary_path, timeout_sec=30)
         if err:
             return jsonify({"error": f"Failed to load binary: {err}"}), 500
